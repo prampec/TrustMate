@@ -1,0 +1,32 @@
+# Build artifacts
+/bin/
+/dist/
+*.exe
+
+# Local runtime state (v1 SQLite datastore, file-backed keystore)
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+/data/
+
+# Secrets / local env
+.env
+*.pem
+*.key
+!testdata/**/*.pem
+!testdata/**/*.key
+
+# Go tooling
+*.test
+*.out
+/coverage.*
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Claude Code local settings
+.claude/
