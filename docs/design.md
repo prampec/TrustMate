@@ -1,22 +1,20 @@
 # TrustMate — a self-contained CA + TSA service (product design)
 
-Status: idea / early setup. Written after working through
-`zdoc-cli/test-env` (EJBCA + SignServer) as the current stand-in, and
-`zdoc-cli/test/ca` (step-ca) as an earlier, abandoned attempt.
+Status: idea / early setup. The idea of creating a product like this came from working with
+EJBCA + SignServer, and step-ca. While these solutions are great
+it is hard to automate tasks with them (e.g. performing agentic tooling).
 
 ## Motivation
 
-The original need was a test PKI for `zdoc-cli`, which today stitches
-together two separately-maintained enterprise products with automation
-bolted on afterward:
+The original need was a test a PKI for an application requires trust a provider for testing.
 
-- **step-ca** (tried first, see `zdoc-cli/test/ca/`) is REST-native and
-  container-friendly, but has no RFC 3161 Time-Stamp Authority — a hard
-  requirement for ZDOC-T/LT/LTA. That's why it was abandoned.
-- **EJBCA + SignServer** (current setup, see `zdoc-cli/test-env/`) together
+Experiences with other solutions:
+
+- **step-ca** (tried first) is REST-native and
+  container-friendly, but templates are hard to maintain and has no RFC 3161 Time-Stamp Authority
+- **EJBCA + SignServer** together
   cover CA + OCSP + CRL + TSA, but both are GUI-administered products with
   automation as an afterthought: no CLI to edit certificate profile fields
-  (`30-configure-cert-profiles.sh` has to be done by hand in AdminWeb),
   fragile CLI-path discovery inside the container images, two databases,
   two admin planes, and documented version drift in GUI workflows.
 
@@ -27,37 +25,51 @@ products built for general-purpose enterprise PKI administration by human
 operators, when what we actually want is a small, deterministic, scriptable
 service.
 
-**TrustMate** generalizes that idea beyond just the `zdoc-cli` test
+**TrustMate** generalizes that idea beyond just a test
 environment: a self-contained CA/OCSP/TSA service — no dependency on any
 other CA/TSA product, only open-source *libraries* — that is REST-first,
-has no admin GUI, is dockerized by construction (a single closed-scope
+has no admin GUI, is containerized by construction (a single closed-scope
 binary with no external service dependencies beyond its own datastore),
-and is architected from day one to be run as a real production service:
-modular (features can be switched on/off), horizontally scalable,
-observable (structured logging, health checks, metrics), not just a
+and is architected from day one to be run as a real production service, not just a
 throwaway test-environment replacement.
 
-## Goals
+## Essential requirements
+- Enterprise level application
+  - modular (configuration level and container level modularity),
+  - horizontally scalable,
+  - observable (structured logging, health checks, metrics)
+- Good coverage with unit tests
+- Enterprise certificate authority functions with certificate profiles of modular features
+- OCSP module enabled by default, and OCSP info is included in the issued certificates by default (if OCSP feature is for the certificate profile)
+- TSA module enabled by default
+- All admin functionality are designed to be accessed via REST API, API is versioned and API documentation is available for the running instance if not disabled.
+  - API access is authorized with client certificate
+  - API access with role check
+- Native Go language implementation
 
-- Issue a root CA and intermediate CA on first run (or accept externally
+## Functional goals
+
+- Issue a root CA, intermediate CA and a REST-access leaf certificate on first run (or accept externally
   generated ones).
-- Issue leaf (document-signing) certificates against simple, code-defined
-  certificate profiles — no profile-editing UI, profiles are versioned
-  config/code.
+- API TLS access client certificates can be managed (first certificate is added with full access by default)
+  - Roles are defined code-level for the access different part of the functionalities. Roles can be managed for the API access.
+  - Roles are: Admin (can alter application configuration), Manager (can list, issue, revoke certificates)
+- Can define certificate profiles in dynamic configuration with modular features like OCSP (e.g. document-signing certificate) profiles are versioned
+- Issue (leaf) certificates against defined certificate profiles. Can list an revoke certificates.
 - Publish CRLs and answer OCSP requests for every non-root certificate.
 - Run an RFC 3161 Time-Stamp Authority.
 - Serve AIA (`caIssuers`), CRL, OCSP, and TSA endpoints over HTTPS with no
-  redirects, matching what `zdoc-cli` already expects
-  (`zdoc-cli/README-cmd.md`, `zdoc-cli/README-ca-tsa-env-req.md`).
+  redirects.
 - Everything reachable and scriptable over one REST API. No feature that
   requires a browser.
 - Deploy as a single static binary / single container image, depending on
   nothing beyond the language runtime and OS libraries at container-build
-  time (no bundled third-party services).
+  time (minimal bundled third-party services). (Database and persistency layer)
 - **Modular by construction**: CA core, revocation (CRL/OCSP), and TSA are
   independently enable/disable-able via config, so a deployment that only
   needs, say, CA + OCSP doesn't run or expose the TSA surface at all.
-  Disabled modules register no routes and consume no resources.
+  Later iterations may enable container-level modularity by adding functions with composition.
+  Modules are not dynamic and cannot be added/switched on-off runtime.
 - **Production-ready cross-cutting concerns, designed in from v1** (not
   necessarily all fully built in v1, but the architecture must not
   preclude them):
@@ -65,12 +77,13 @@ throwaway test-environment replacement.
     deployment's log pipeline expects (JSON to stdout is the default —
     the norm for container log collection into ELK/Loki/CloudWatch/etc.).
   - Liveness/readiness health-check endpoints suitable for container
-    orchestrators (Docker healthcheck, Kubernetes probes).
+    orchestrators (Container healthcheck, Kubernetes probes).
   - Metrics endpoint (Prometheus exposition format) for issuance rates,
     OCSP/TSA request latency and error rates, datastore health.
   - A storage interface that isn't hard-wired to SQLite, so a
     horizontally-scaled deployment can point multiple stateless API
     instances at a shared Postgres without an API rewrite.
+  - Container ready configuration: environment variables override configuration file
   - Graceful shutdown, request timeouts, and rate limiting on the public
     unauthenticated endpoints (`/v1/ocsp`, `/v1/tsa`).
 
@@ -87,14 +100,11 @@ throwaway test-environment replacement.
   must not preclude running it that way later. "No HA in v1" is a
   sequencing choice, not a design ceiling.
 
-## Requirements (mapped from `zdoc-cli/README-ca-tsa-env-req.md`)
+## Other requirements
 
 | Requirement | v1 approach |
 |---|---|
-| Private root certificate | `POST /v1/ca/root` (one-time init) or import |
-| Repeatable root install for clients | out of scope for the service itself — same `install-root-ca-*` client scripts apply unchanged |
-| Independent second machine / offline portability test | unchanged — client-side concern, not server-side |
-| AIA `caIssuers` on every non-root cert | issuer cert URL templated into every issued cert at signing time |
+| AIA `caIssuers` on every non-root cert | issuer cert URL templated into every issued cert at signing time, controlled by certificate profile |
 | CRL DP on every non-anchor cert | same |
 | AIA OCSP on every non-anchor cert | same |
 | HTTPS only, no redirects | REST server terminates TLS itself (or expects to sit behind a dumb TLS-terminating proxy — see Architecture) |
@@ -102,6 +112,7 @@ throwaway test-environment replacement.
 
 ## Building blocks
 
+TODO: add admin access and dynamic configuratio to the graph below
 ```
                          ┌───────────────────────────┐
    clients  ───────────► │        REST API            │  HTTPS
@@ -166,10 +177,10 @@ sprawl"):
    owns the cross-cutting HTTP concerns: `/healthz`, `/readyz`, `/metrics`,
    structured request logging, rate limiting on public endpoints.
 8. **`admin`** — a small CLI (not a web GUI) for the operations that are
-   inherently one-time or operator-only: root CA init, profile reload,
-   manual revocation, key rotation. Talks to the same REST API a human
-   would use a GUI for elsewhere — dogfoods the API instead of adding a
-   second, parallel admin path.
+   inherently operator-only: dynamic configuration like profile manipulation.
+   API design standards are used.
+8. **`management`** — a small CLI for the operations that are
+   inherently operator-only: certificate operations, key rotation.
 9. **`observability`** — cross-cutting, not a request-path module: a small
    logging interface (structured, JSON-to-stdout by default) that
    downstream deployments can wire into their log pipeline of choice, plus
@@ -178,7 +189,6 @@ sprawl"):
 ## REST API sketch
 
 ```
-POST   /v1/init                      one-time: create root + intermediate CA
 GET    /v1/ca/root.pem               AIA caIssuers target
 GET    /v1/ca/intermediate.pem       AIA caIssuers target
 
@@ -190,7 +200,7 @@ GET    /v1/crl/{ca}.crl              CRL Distribution Point target        (revoc
 POST   /v1/ocsp                      RFC 6960 OCSP responder              (revocation module)
 POST   /v1/tsa                       RFC 3161 TSA (application/timestamp-query) (tsa module)
 
-GET    /v1/profiles                  list available certificate profiles
+GET    /v1/profiles                  list, manage available certificate profiles
 POST   /v1/profiles/reload           re-read profile config without restart
 
 GET    /v1/audit                     issuance/revocation audit trail
@@ -208,22 +218,22 @@ exposed on a private/ops network, not through the public-facing proxy.
 
 ## Phased roadmap
 
-**Phase 0 (bootstrap, ~1 day)**: root+intermediate CA generation, file-based
-key storage, SQLite schema, `POST /v1/init`, module enable/disable config
-scaffolding, `/healthz`/`/readyz`, structured logging wired through from
-the start (cheap now, invasive to retrofit).
+**Phase 0**:
+root+intermediate CA, admin REST TLS access certificate generation, file-based
+key storage, SQLite schema, module enable/disable config
+scaffolding, `/healthz`/`/readyz`, configuration, structured logging wired through from
+the start and other enterprise level architecture elements.
+Data structure with profiles, default profile is created for the initial intermediate and admin access certificate.
 
-**Phase 1 (MVP, ~2–4 days)**: certificate issuance from a CSR against a
-hardcoded document-signing profile (`GET /v1/ca/*.pem`, `POST
-/v1/certificates`), CRL generation + serving, OCSP responder. This alone
-is enough to replace `zdoc-cli/test-env`'s EJBCA half for day-to-day
-`zdoc-cli sign` testing.
+**Phase 1**: 
+certificate issuance from a CSR against an example "document-signing" profile (`GET /v1/ca/*.pem`, `POST
+/v1/certificates`), CRL generation + serving, OCSP responder.
 
-**Phase 2 (~1–2 days)**: RFC 3161 TSA endpoint with its own
+**Phase 2**: RFC 3161 TSA endpoint with its own
 server-issued signing identity — replaces the SignServer half.
 
-**Phase 3**: profile config file (multiple profiles, not hardcoded),
-revocation via REST, audit log endpoint, `admin` CLI, `/metrics`,
+**Phase 3**: profile config (multiple profiles, not hardcoded), client access control with roles (available roles are hardcoded properties of the application)
+revocation via REST, audit log endpoint, `admin` and `management` CLI, `/metrics`,
 request-level auth (mTLS or bearer tokens).
 
 **Phase 4**: storage interface's Postgres implementation (alongside
@@ -234,13 +244,6 @@ load balancer.
 for automated client enrollment, HA/clustering topology, minimal
 read-only status UI (explicitly *not* an admin/config UI — just "what's
 issued, what's revoked").
-
-Phases 0–2 alone would already let `zdoc-cli/test-env` be replaced with a
-single container running this service plus a thin TLS-terminating reverse
-proxy, and the existing `zdoc-cli/test-env/scripts/client-verify.sh` /
-`request-timestamp.sh` scripts should keep working against it unmodified
-as acceptance tests — they only assume HTTPS endpoints at known paths, not
-EJBCA/SignServer specifically.
 
 ## Security considerations
 
@@ -254,10 +257,6 @@ EJBCA/SignServer specifically.
   practice.
 - Rate-limit `/v1/ocsp` and `/v1/tsa` (public, unauthenticated) since
   they're the endpoints every client hits repeatedly.
-- Certificate profiles as versioned config (not runtime-editable over the
-  API by default) closes off the main class of "GUI let me create an
-  inconsistent profile" bug that `zdoc-cli/test-env/scripts/30-*.sh`
-  worked around by hand.
 
 ## Open questions to resolve before starting
 
@@ -276,6 +275,6 @@ EJBCA/SignServer specifically.
    issuance at `/v1/init` time)? Needs a decision when Phase 0's config
    loader is written.
 
-Resolved: implementation language is Go (see `go.mod`); repo is a
-standalone GitHub repository, `github.com/prampec/trustmate`, with no
-Java/JVM dependency.
+## Verifications of the implementation
+
+- Revocation list info is already available in the intermediate certificate if module is enabled.
