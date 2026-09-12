@@ -94,6 +94,8 @@ func TSA() Profile {
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
 		CriticalEKU:  true,
+		EnableOCSP:   true,
+		EnableCRL:    true,
 	}
 }
 
