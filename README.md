@@ -21,20 +21,40 @@ are independently enabled or disabled via config.
 ## Quick start (development)
 
 ```sh
+export TRUSTMATE_KEK=some-local-dev-passphrase   # encrypts the keystore at rest
 go build ./...
 go run ./cmd/trustmated
 ```
 
-Environment variables (all optional):
+On first run, trustmated generates a root CA, an intermediate CA, an
+admin REST access certificate, and the server's own TLS certificate (see
+[`docs/design.md`](docs/design.md)'s Phase 0 entry). The root/intermediate/
+server-tls private keys are kept encrypted at rest under the keystore
+directory; the admin certificate and its **unencrypted** private key are
+written once to the bootstrap output directory (`./data/bootstrap/` by
+default) for the operator to retrieve and move off-host — `admin-key.pem`
+is sensitive and not meant to stay there. Restarting with existing CA
+material is a no-op (bootstrap is idempotent).
+
+Environment variables (all optional; env always overrides a config file,
+set via `TRUSTMATE_CONFIG_FILE`):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `TRUSTMATE_LISTEN_ADDR` | `:8080` | HTTP listen address |
+| `TRUSTMATE_CONFIG_FILE` | *(none)* | path to a YAML config file |
+| `TRUSTMATE_LISTEN_ADDR` | `:8080` | HTTPS listen address |
+| `TRUSTMATE_TLS_SANS` | `localhost` | comma-separated SANs for the server TLS certificate |
 | `TRUSTMATE_LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARN`/`ERROR` |
 | `TRUSTMATE_ENABLE_REVOCATION` | `true` | toggle CRL/OCSP module |
 | `TRUSTMATE_ENABLE_TSA` | `true` | toggle RFC 3161 TSA module |
+| `TRUSTMATE_STORE_DSN` | `./data/trustmate.db` | SQLite datastore path |
+| `TRUSTMATE_KEYSTORE_DIR` | `./data/keys` | encrypted private key storage directory |
+| `TRUSTMATE_BOOTSTRAP_OUTPUT_DIR` | `./data/bootstrap` | where first-run cert/key material is written |
+| `TRUSTMATE_KEK` | *(required)* | keystore encryption passphrase (or use `TRUSTMATE_KEK_FILE` to read it from a mounted secret file) |
+| `TRUSTMATE_PROFILES_DIR` | *(none)* | optional directory of extra profile definitions |
 
-Health/ops endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics`.
+Health/ops endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics` (all
+served over HTTPS, like everything else).
 
 ## Layout
 
@@ -42,12 +62,14 @@ Health/ops endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics`.
 cmd/trustmated/       service entrypoint
 cmd/trustmate-admin/  operator CLI (not implemented yet — phase 3)
 internal/api/         REST surface + health/metrics/logging
+internal/bootstrap/   first-run CA/admin/server-tls cert generation
+internal/config/      configuration loading (YAML file + env overrides)
 internal/pki/         CA core: certificate issuance
-internal/revocation/  CRL + OCSP responder
-internal/tsa/         RFC 3161 Time-Stamp Authority
+internal/revocation/  CRL + OCSP responder (not implemented yet — phase 1)
+internal/tsa/         RFC 3161 Time-Stamp Authority (not implemented yet — phase 2)
 internal/profiles/    certificate profile definitions (config/code)
-internal/keystore/    private key storage abstraction
-internal/store/       issued-cert ledger, serials, revocations, audit log
+internal/keystore/    encrypted file-backed private key storage
+internal/store/       issued-cert ledger, profiles, audit log (SQLite)
 internal/observability/ structured logging setup
 docs/design.md        full product design
 ```
