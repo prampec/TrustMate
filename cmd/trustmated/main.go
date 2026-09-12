@@ -17,6 +17,7 @@ import (
 	"github.com/prampec/trustmate/internal/config"
 	"github.com/prampec/trustmate/internal/keystore"
 	"github.com/prampec/trustmate/internal/observability"
+	"github.com/prampec/trustmate/internal/revocation"
 	"github.com/prampec/trustmate/internal/store/sqlite"
 )
 
@@ -63,6 +64,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	interCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	interIssuer, err := bootstrap.LoadIntermediateIssuer(interCtx, db, ks)
+	cancel()
+	if err != nil {
+		logger.Error("loading intermediate CA issuer failed", "err", err)
+		os.Exit(1)
+	}
+
 	mods := api.ModuleConfig{
 		EnableRevocation: cfg.Modules.Revocation,
 		EnableTSA:        cfg.Modules.TSA,
@@ -72,7 +81,21 @@ func main() {
 		defer cancel()
 		return db.Ping(ctx)
 	}
-	router := api.NewRouter(logger, mods, ready)
+
+	// POST /v1/certificates has no request-level auth in Phase 1 -- see
+	// docs/design.md's Phase 3 roadmap entry. Not gated behind any flag;
+	// it always applies while this phase's code is running.
+	logger.Warn("POST /v1/certificates is unauthenticated in this phase -- anyone reaching the listener can issue a certificate; see docs/design.md Phase 3")
+
+	router := api.NewRouter(api.Deps{
+		Logger:             logger,
+		Store:              db,
+		IntermediateIssuer: interIssuer,
+		PublicBaseURL:      cfg.Server.PublicBaseURL,
+		ModuleConfig:       mods,
+		CRLBuilder:         revocation.NewCRLBuilder(interIssuer),
+		OCSPResponder:      revocation.NewOCSPResponder(interIssuer, db.Certificates()),
+	}, ready)
 
 	server := &http.Server{
 		Addr:              cfg.Server.ListenAddr,

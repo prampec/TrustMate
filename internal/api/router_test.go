@@ -14,7 +14,7 @@ func testLogger() *slog.Logger {
 }
 
 func TestReadyzWithNilCheckerReturnsOK(t *testing.T) {
-	router := NewRouter(testLogger(), ModuleConfig{}, nil)
+	router := NewRouter(Deps{Logger: testLogger()}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -27,7 +27,7 @@ func TestReadyzWithNilCheckerReturnsOK(t *testing.T) {
 
 func TestReadyzWithFailingCheckerReturnsServiceUnavailable(t *testing.T) {
 	ready := func() error { return errors.New("datastore unreachable") }
-	router := NewRouter(testLogger(), ModuleConfig{}, ready)
+	router := NewRouter(Deps{Logger: testLogger()}, ready)
 
 	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	rec := httptest.NewRecorder()
@@ -39,7 +39,7 @@ func TestReadyzWithFailingCheckerReturnsServiceUnavailable(t *testing.T) {
 }
 
 func TestHealthzReturnsOK(t *testing.T) {
-	router := NewRouter(testLogger(), ModuleConfig{}, nil)
+	router := NewRouter(Deps{Logger: testLogger()}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()

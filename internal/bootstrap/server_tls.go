@@ -3,10 +3,12 @@ package bootstrap
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 
 	"github.com/prampec/trustmate/internal/keystore"
+	"github.com/prampec/trustmate/internal/pki"
 	"github.com/prampec/trustmate/internal/profiles"
 	"github.com/prampec/trustmate/internal/store"
 )
@@ -56,6 +58,38 @@ func LoadServerTLSConfig(ctx context.Context, st store.Store, ks keystore.KeySto
 			PrivateKey:  signer,
 		}},
 	}, nil
+}
+
+// LoadIntermediateIssuer reconstructs the intermediate CA's pki.Issuer
+// (cert + signer) from the store and keystore at runtime, for use by
+// anything that needs to sign with it after bootstrap -- e.g. leaf
+// issuance, CRL generation, OCSP responses. Same "reconstruct
+// bootstrap-generated material at runtime" role as LoadServerTLSConfig.
+func LoadIntermediateIssuer(ctx context.Context, st store.Store, ks keystore.KeyStore) (pki.Issuer, error) {
+	interRecs, err := st.Certificates().FindByKind(ctx, store.CertKindIntermediate)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: loading intermediate certificate: %w", err)
+	}
+	if len(interRecs) == 0 {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: no intermediate certificate found")
+	}
+	interRec := interRecs[len(interRecs)-1]
+
+	interDER, err := derFromPEM(interRec.PEM)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: decoding intermediate PEM: %w", err)
+	}
+	cert, err := x509.ParseCertificate(interDER)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: parsing intermediate certificate: %w", err)
+	}
+
+	signer, err := ks.Get(ctx, IntermediateKeyRef)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: loading intermediate private key: %w", err)
+	}
+
+	return pki.Issuer{Cert: cert, Signer: signer}, nil
 }
 
 func derFromPEM(data []byte) ([]byte, error) {

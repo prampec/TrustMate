@@ -44,6 +44,7 @@ set via `TRUSTMATE_CONFIG_FILE`):
 | `TRUSTMATE_CONFIG_FILE` | *(none)* | path to a YAML config file |
 | `TRUSTMATE_LISTEN_ADDR` | `:8080` | HTTPS listen address |
 | `TRUSTMATE_TLS_SANS` | `localhost` | comma-separated SANs for the server TLS certificate |
+| `TRUSTMATE_PUBLIC_BASE_URL` | `https://localhost:8080` | this deployment's externally reachable origin, templated into AIA/CDP/OCSP certificate extensions at issuance time |
 | `TRUSTMATE_LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARN`/`ERROR` |
 | `TRUSTMATE_ENABLE_REVOCATION` | `true` | toggle CRL/OCSP module |
 | `TRUSTMATE_ENABLE_TSA` | `true` | toggle RFC 3161 TSA module |
@@ -56,6 +57,18 @@ set via `TRUSTMATE_CONFIG_FILE`):
 Health/ops endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics` (all
 served over HTTPS, like everything else).
 
+CA/revocation endpoints (Phase 1; `POST /v1/certificates` has no
+request-level auth yet — see `docs/design.md`'s Phase 3 entry):
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/ca/root.pem` | root CA certificate (AIA `caIssuers` target) |
+| `GET /v1/ca/intermediate.pem` | intermediate CA certificate (AIA `caIssuers` target) |
+| `POST /v1/certificates` | issue a leaf certificate from a CSR against a named profile (`{"profile": ..., "csr": "<PEM>"}`) |
+| `GET /v1/certificates/{serial}` | look up an issued certificate by serial |
+| `GET /v1/crl/intermediate.crl` | intermediate CA's CRL (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
+| `POST /v1/ocsp` | RFC 6960 OCSP responder (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
+
 ## Layout
 
 ```
@@ -65,7 +78,7 @@ internal/api/         REST surface + health/metrics/logging
 internal/bootstrap/   first-run CA/admin/server-tls cert generation
 internal/config/      configuration loading (YAML file + env overrides)
 internal/pki/         CA core: certificate issuance
-internal/revocation/  CRL + OCSP responder (not implemented yet — phase 1)
+internal/revocation/  CRL + OCSP responder
 internal/tsa/         RFC 3161 Time-Stamp Authority (not implemented yet — phase 2)
 internal/profiles/    certificate profile definitions (config/code)
 internal/keystore/    encrypted file-backed private key storage

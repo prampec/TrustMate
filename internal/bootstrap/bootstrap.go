@@ -27,9 +27,13 @@ import (
 )
 
 const (
-	refRoot         keystore.KeyRef = "root"
-	refIntermediate keystore.KeyRef = "intermediate"
-	refServerTLS    keystore.KeyRef = "server-tls"
+	refRoot      keystore.KeyRef = "root"
+	refServerTLS keystore.KeyRef = "server-tls"
+
+	// IntermediateKeyRef is the keystore ref for the intermediate CA's
+	// signing key, exported so callers outside this package (e.g.
+	// LoadIntermediateIssuer) can reload it at runtime.
+	IntermediateKeyRef keystore.KeyRef = "intermediate"
 
 	bootstrapAlgorithm = keystore.AlgorithmECDSAP256
 )
@@ -146,25 +150,26 @@ func generateRoot(ctx context.Context, cfg config.Config, st store.Store, ks key
 }
 
 func generateIntermediate(ctx context.Context, cfg config.Config, st store.Store, ks keystore.KeyStore, root pki.Issuer) (pki.Issuer, error) {
-	signer, err := ks.Generate(ctx, refIntermediate, bootstrapAlgorithm)
+	signer, err := ks.Generate(ctx, IntermediateKeyRef, bootstrapAlgorithm)
 	if err != nil {
 		return pki.Issuer{}, fmt.Errorf("bootstrap: generating intermediate key: %w", err)
 	}
 
 	req := pki.CertRequest{
-		Subject:     pkix.Name{CommonName: cfg.Bootstrap.IntermediateCommonName},
-		PublicKey:   signer.Public(),
-		NotBefore:   time.Now(),
-		NotAfter:    time.Now().Add(cfg.Bootstrap.IntermediateValidity),
-		IsCA:        true,
-		PathLenZero: true,
-		KeyUsage:    x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		Subject:      pkix.Name{CommonName: cfg.Bootstrap.IntermediateCommonName},
+		PublicKey:    signer.Public(),
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(cfg.Bootstrap.IntermediateValidity),
+		IsCA:         true,
+		PathLenZero:  true,
+		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		AIAIssuerURL: cfg.Server.PublicBaseURL + "/v1/ca/root.pem",
 	}
 	// Resolves design.md's "revocation list info is already available in
 	// the intermediate certificate if module is enabled" verification.
 	if cfg.Modules.Revocation {
-		req.CRLURL = "/v1/crl/intermediate.crl"
-		req.OCSPURL = "/v1/ocsp"
+		req.CRLURL = cfg.Server.PublicBaseURL + "/v1/crl/intermediate.crl"
+		req.OCSPURL = cfg.Server.PublicBaseURL + "/v1/ocsp"
 	}
 
 	cert, err := pki.IssueCA(req, root)
@@ -172,7 +177,7 @@ func generateIntermediate(ctx context.Context, cfg config.Config, st store.Store
 		return pki.Issuer{}, fmt.Errorf("bootstrap: issuing intermediate CA: %w", err)
 	}
 
-	if err := createCertRecord(ctx, st, cert, store.CertKindIntermediate, "", root.Cert.SerialNumber.String(), string(refIntermediate)); err != nil {
+	if err := createCertRecord(ctx, st, cert, store.CertKindIntermediate, "", root.Cert.SerialNumber.String(), string(IntermediateKeyRef)); err != nil {
 		return pki.Issuer{}, err
 	}
 	return pki.Issuer{Cert: cert, Signer: signer}, nil
@@ -188,7 +193,7 @@ func generateAdminLeaf(ctx context.Context, cfg config.Config, st store.Store, i
 		return nil, nil, fmt.Errorf("bootstrap: generating admin key: %w", err)
 	}
 
-	profile := profiles.Default()
+	profile := profiles.Default().WithIssuerURLs(cfg.Server.PublicBaseURL, cfg.Modules.Revocation)
 	now := time.Now()
 	cert, err := pki.IssueLeaf(profile, pkix.Name{CommonName: cfg.Bootstrap.AdminCommonName}, key.Public(),
 		inter, now, now.Add(cfg.Bootstrap.AdminValidity), nil)
@@ -208,7 +213,7 @@ func generateServerTLSLeaf(ctx context.Context, cfg config.Config, st store.Stor
 		return pki.Issuer{}, fmt.Errorf("bootstrap: generating server-tls key: %w", err)
 	}
 
-	profile := profiles.ServerTLS()
+	profile := profiles.ServerTLS().WithIssuerURLs(cfg.Server.PublicBaseURL, cfg.Modules.Revocation)
 	now := time.Now()
 	cert, err := pki.IssueLeaf(profile, pkix.Name{CommonName: cfg.Bootstrap.ServerCommonName}, signer.Public(),
 		inter, now, now.Add(cfg.Bootstrap.ServerValidity), cfg.Server.TLSSANs)

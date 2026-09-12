@@ -20,6 +20,10 @@ type Config struct {
 type ServerConfig struct {
 	ListenAddr string   `yaml:"listen_addr"`
 	TLSSANs    []string `yaml:"tls_sans"`
+	// PublicBaseURL is this deployment's externally reachable origin
+	// (scheme+host), templated into AIA/CDP/OCSP certificate extensions
+	// at issuance time so those pointers are real, dereferenceable URIs.
+	PublicBaseURL string `yaml:"public_base_url"`
 }
 
 type LogConfig struct {
@@ -69,8 +73,9 @@ type ProfilesConfig struct {
 func Defaults() Config {
 	return Config{
 		Server: ServerConfig{
-			ListenAddr: ":8080",
-			TLSSANs:    []string{"localhost"},
+			ListenAddr:    ":8080",
+			TLSSANs:       []string{"localhost"},
+			PublicBaseURL: "https://localhost:8080",
 		},
 		Log: LogConfig{
 			Level: "INFO",

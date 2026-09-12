@@ -71,6 +71,43 @@ func TestLoadUnsupportedDriverErrors(t *testing.T) {
 	}
 }
 
+func TestLoadInvalidPublicBaseURLErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  public_base_url: \"not-a-url\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load with schemeless public_base_url returned nil error, want error")
+	}
+}
+
+func TestLoadTrimsTrailingSlashFromPublicBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  public_base_url: \"https://ca.example.com/\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Server.PublicBaseURL != "https://ca.example.com" {
+		t.Errorf("PublicBaseURL = %q, want https://ca.example.com (trailing slash trimmed)", cfg.Server.PublicBaseURL)
+	}
+}
+
+func TestApplyEnvOverridesPublicBaseURL(t *testing.T) {
+	t.Setenv("TRUSTMATE_PUBLIC_BASE_URL", "https://ca.example.com")
+	cfg, err := LoadFromEnv("")
+	if err != nil {
+		t.Fatalf("LoadFromEnv returned error: %v", err)
+	}
+	if cfg.Server.PublicBaseURL != "https://ca.example.com" {
+		t.Errorf("PublicBaseURL = %q, want https://ca.example.com", cfg.Server.PublicBaseURL)
+	}
+}
+
 func TestApplyEnvOverridesPrecedence(t *testing.T) {
 	// default < file < env
 	dir := t.TempDir()

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ func Load(path string) (Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return Config{}, fmt.Errorf("config: parsing %s: %w", path, err)
 	}
-	if err := validate(cfg); err != nil {
+	if err := validate(&cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
@@ -37,7 +38,7 @@ func LoadFromEnv(path string) (Config, error) {
 		return Config{}, err
 	}
 	ApplyEnvOverrides(&cfg)
-	if err := validate(cfg); err != nil {
+	if err := validate(&cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
@@ -50,6 +51,7 @@ func LoadFromEnv(path string) (Config, error) {
 func ApplyEnvOverrides(cfg *Config) {
 	strVar(&cfg.Server.ListenAddr, "TRUSTMATE_LISTEN_ADDR")
 	strSliceVar(&cfg.Server.TLSSANs, "TRUSTMATE_TLS_SANS")
+	strVar(&cfg.Server.PublicBaseURL, "TRUSTMATE_PUBLIC_BASE_URL")
 	strVar(&cfg.Log.Level, "TRUSTMATE_LOG_LEVEL")
 	boolVar(&cfg.Modules.Revocation, "TRUSTMATE_ENABLE_REVOCATION")
 	boolVar(&cfg.Modules.TSA, "TRUSTMATE_ENABLE_TSA")
@@ -60,10 +62,18 @@ func ApplyEnvOverrides(cfg *Config) {
 	strVar(&cfg.Profiles.Dir, "TRUSTMATE_PROFILES_DIR")
 }
 
-func validate(cfg Config) error {
+func validate(cfg *Config) error {
 	if cfg.Store.Driver != "sqlite" {
 		return fmt.Errorf("config: unsupported store driver %q (only \"sqlite\" is supported)", cfg.Store.Driver)
 	}
+	u, err := url.Parse(cfg.Server.PublicBaseURL)
+	if err != nil {
+		return fmt.Errorf("config: server.public_base_url %q: %w", cfg.Server.PublicBaseURL, err)
+	}
+	if u.Scheme == "" || u.Host == "" {
+		return fmt.Errorf("config: server.public_base_url %q: must be an absolute URL with scheme and host", cfg.Server.PublicBaseURL)
+	}
+	cfg.Server.PublicBaseURL = strings.TrimRight(cfg.Server.PublicBaseURL, "/")
 	return nil
 }
 

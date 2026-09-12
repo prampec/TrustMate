@@ -22,7 +22,7 @@ const (
 
 // CertificateRecord is one row of the certificate ledger.
 type CertificateRecord struct {
-	Serial string // hex-encoded big.Int; primary key
+	Serial string // decimal big.Int.String(); primary key
 	Kind   CertKind
 	// ProfileName is empty for root/intermediate rows -- those are
 	// generated through CA-specific bootstrap logic, not a leaf profile.

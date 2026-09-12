@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+
+	"github.com/prampec/trustmate/internal/store"
 )
 
 // ModuleConfig controls which optional route groups are registered.
@@ -24,25 +26,30 @@ type ModuleConfig struct {
 type ReadyChecker func() error
 
 // NewRouter builds the top-level HTTP handler.
-func NewRouter(logger *slog.Logger, mods ModuleConfig, ready ReadyChecker) http.Handler {
+func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(ready))
 	mux.HandleFunc("GET /metrics", handleMetrics)
 
-	// TODO(phase 1): register /v1/ca/*, /v1/certificates* unconditionally
-	// (pki core is always on).
-	if mods.EnableRevocation {
-		// TODO(phase 1): register /v1/crl/{ca}.crl, /v1/ocsp
-		logger.Info("revocation module enabled")
+	// pki core (certificate issuance) is always on.
+	mux.HandleFunc("GET /v1/ca/root.pem", handleCAPem(deps, store.CertKindRoot))
+	mux.HandleFunc("GET /v1/ca/intermediate.pem", handleCAPem(deps, store.CertKindIntermediate))
+	mux.HandleFunc("POST /v1/certificates", handleIssueCertificate(deps))
+	mux.HandleFunc("GET /v1/certificates/{serial}", handleGetCertificate(deps))
+
+	if deps.ModuleConfig.EnableRevocation {
+		mux.HandleFunc("GET /v1/crl/{ca}", handleCRL(deps))
+		mux.HandleFunc("POST /v1/ocsp", handleOCSP(deps))
+		deps.Logger.Info("revocation module enabled")
 	}
-	if mods.EnableTSA {
+	if deps.ModuleConfig.EnableTSA {
 		// TODO(phase 2): register /v1/tsa
-		logger.Info("tsa module enabled")
+		deps.Logger.Info("tsa module enabled")
 	}
 
-	return withRequestLogging(logger, mux)
+	return withRequestLogging(deps.Logger, mux)
 }
 
 func handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -77,4 +84,16 @@ func withRequestLogging(logger *slog.Logger, next http.Handler) http.Handler {
 		logger.Info("request", "method", r.Method, "path", r.URL.Path)
 		next.ServeHTTP(w, r)
 	})
+}
+
+// writeJSON encodes v as the JSON response body with the given status.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+// writeError writes a {"error": msg} JSON envelope with the given status.
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
 }

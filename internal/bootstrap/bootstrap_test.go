@@ -147,6 +147,83 @@ func TestRunIsIdempotentAndNeverCallsGenerateOnRestart(t *testing.T) {
 	}
 }
 
+func TestRunUsesAbsolutePublicBaseURLInExtensions(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Defaults()
+	cfg.Bootstrap.OutputDir = filepath.Join(t.TempDir(), "bootstrap")
+	cfg.Server.PublicBaseURL = "https://ca.example.test"
+	st := newTestStore(t)
+	ks := newTestKeyStore(t)
+
+	if _, err := Run(ctx, discardLogger(), cfg, st, ks); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	inters, err := st.Certificates().FindByKind(ctx, store.CertKindIntermediate)
+	if err != nil || len(inters) != 1 {
+		t.Fatalf("FindByKind(intermediate) = %v, %v; want 1 row", inters, err)
+	}
+	interCert := parseCertPEM(t, inters[0].PEM)
+	if len(interCert.IssuingCertificateURL) != 1 || interCert.IssuingCertificateURL[0] != "https://ca.example.test/v1/ca/root.pem" {
+		t.Errorf("intermediate IssuingCertificateURL = %v, want [https://ca.example.test/v1/ca/root.pem]", interCert.IssuingCertificateURL)
+	}
+	if len(interCert.CRLDistributionPoints) != 1 || interCert.CRLDistributionPoints[0] != "https://ca.example.test/v1/crl/intermediate.crl" {
+		t.Errorf("intermediate CRLDistributionPoints = %v, want [https://ca.example.test/v1/crl/intermediate.crl]", interCert.CRLDistributionPoints)
+	}
+	if len(interCert.OCSPServer) != 1 || interCert.OCSPServer[0] != "https://ca.example.test/v1/ocsp" {
+		t.Errorf("intermediate OCSPServer = %v, want [https://ca.example.test/v1/ocsp]", interCert.OCSPServer)
+	}
+
+	leaves, err := st.Certificates().FindByKind(ctx, store.CertKindLeaf)
+	if err != nil || len(leaves) != 2 {
+		t.Fatalf("FindByKind(leaf) = %v, %v; want 2 rows", leaves, err)
+	}
+	for _, rec := range leaves {
+		cert := parseCertPEM(t, rec.PEM)
+		if len(cert.IssuingCertificateURL) != 1 || cert.IssuingCertificateURL[0] != "https://ca.example.test/v1/ca/intermediate.pem" {
+			t.Errorf("leaf %s IssuingCertificateURL = %v, want [https://ca.example.test/v1/ca/intermediate.pem]", rec.Serial, cert.IssuingCertificateURL)
+		}
+	}
+}
+
+func TestLoadIntermediateIssuerMatchesStoredCertAndKey(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Defaults()
+	cfg.Bootstrap.OutputDir = filepath.Join(t.TempDir(), "bootstrap")
+	st := newTestStore(t)
+	ks := newTestKeyStore(t)
+
+	if _, err := Run(ctx, discardLogger(), cfg, st, ks); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	issuer, err := LoadIntermediateIssuer(ctx, st, ks)
+	if err != nil {
+		t.Fatalf("LoadIntermediateIssuer: %v", err)
+	}
+
+	inters, err := st.Certificates().FindByKind(ctx, store.CertKindIntermediate)
+	if err != nil || len(inters) != 1 {
+		t.Fatalf("FindByKind(intermediate) = %v, %v; want 1 row", inters, err)
+	}
+	wantCert := parseCertPEM(t, inters[0].PEM)
+	if issuer.Cert.SerialNumber.Cmp(wantCert.SerialNumber) != 0 {
+		t.Errorf("issuer.Cert serial = %v, want %v", issuer.Cert.SerialNumber, wantCert.SerialNumber)
+	}
+
+	gotDER, err := x509.MarshalPKIXPublicKey(issuer.Signer.Public())
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey(signer): %v", err)
+	}
+	wantDER, err := x509.MarshalPKIXPublicKey(wantCert.PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey(cert): %v", err)
+	}
+	if string(gotDER) != string(wantDER) {
+		t.Error("issuer.Signer's public key does not match the stored intermediate certificate's public key")
+	}
+}
+
 // panicOnGenerate wraps a KeyStore and panics if Generate is ever
 // called, proving the idempotency short-circuit never touches the
 // keystore on a restart.

@@ -60,3 +60,52 @@ func ServerTLS() Profile {
 		Validity:     365 * 24 * time.Hour,
 	}
 }
+
+// DocumentSigning is Phase 1's example profile for CSR-driven issuance
+// via POST /v1/certificates -- see docs/design.md's Phase 1 roadmap
+// entry. No specific ExtKeyUsage: this is illustrative, not a
+// compliance-grade document-signing spec.
+func DocumentSigning() Profile {
+	return Profile{
+		Name:         "document-signing",
+		Version:      1,
+		KeyAlgorithm: keystore.AlgorithmECDSAP256,
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageContentCommitment,
+		Validity:     2 * 365 * 24 * time.Hour,
+		EnableOCSP:   true,
+		EnableCRL:    true,
+	}
+}
+
+// All returns every built-in profile.
+func All() []Profile {
+	return []Profile{Default(), ServerTLS(), DocumentSigning()}
+}
+
+// Lookup finds a built-in profile by name.
+func Lookup(name string) (Profile, bool) {
+	for _, p := range All() {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return Profile{}, false
+}
+
+// WithIssuerURLs returns a copy of p with its AIA/CDP/OCSP URL templates
+// populated from baseURL, the deployment's public origin. AIA caIssuers
+// is always set (per docs/design.md's table: "on every non-root cert");
+// CDP/AIA-OCSP are set only when both revocationEnabled (the revocation
+// module is on at all) and the profile's own EnableCRL/EnableOCSP (this
+// class of certificate wants that extension) are true -- two independent
+// gates, mirroring internal/bootstrap's existing module-gating pattern.
+func (p Profile) WithIssuerURLs(baseURL string, revocationEnabled bool) Profile {
+	p.AIATemplate = baseURL + "/v1/ca/intermediate.pem"
+	if revocationEnabled && p.EnableCRL {
+		p.CDPTemplate = baseURL + "/v1/crl/intermediate.crl"
+	}
+	if revocationEnabled && p.EnableOCSP {
+		p.OCSPTemplate = baseURL + "/v1/ocsp"
+	}
+	return p
+}
