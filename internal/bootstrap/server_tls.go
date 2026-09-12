@@ -115,6 +115,39 @@ func LoadIntermediateIssuer(ctx context.Context, st store.Store, ks keystore.Key
 	return pki.Issuer{Cert: cert, Signer: signer}, nil
 }
 
+// LoadRootIssuer reconstructs the root CA's pki.Issuer (cert + signer)
+// from the store and keystore at runtime -- same "reconstruct
+// bootstrap-generated material" role as LoadIntermediateIssuer, but for
+// the root. Needed so the root's own CRL (which must list revocations of
+// certificates the root itself issued, i.e. the intermediate) can be
+// signed by the root rather than by the intermediate.
+func LoadRootIssuer(ctx context.Context, st store.Store, ks keystore.KeyStore) (pki.Issuer, error) {
+	rootRecs, err := st.Certificates().FindByKind(ctx, store.CertKindRoot)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: loading root certificate: %w", err)
+	}
+	if len(rootRecs) == 0 {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: no root certificate found")
+	}
+	rootRec := rootRecs[len(rootRecs)-1]
+
+	rootDER, err := derFromPEM(rootRec.PEM)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: decoding root PEM: %w", err)
+	}
+	cert, err := x509.ParseCertificate(rootDER)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: parsing root certificate: %w", err)
+	}
+
+	signer, err := ks.Get(ctx, refRoot)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: loading root private key: %w", err)
+	}
+
+	return pki.Issuer{Cert: cert, Signer: signer}, nil
+}
+
 // LoadTSAIssuer reconstructs the TSA's own pki.Issuer (cert + signer)
 // from the store and keystore at runtime -- same "reconstruct
 // bootstrap-generated material" role as LoadIntermediateIssuer, but for

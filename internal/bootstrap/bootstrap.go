@@ -192,9 +192,12 @@ func generateIntermediate(ctx context.Context, cfg config.Config, st store.Store
 		AIAIssuerURL: cfg.Server.PublicBaseURL + "/v1/ca/root.pem",
 	}
 	// Resolves design.md's "revocation list info is already available in
-	// the intermediate certificate if module is enabled" verification.
+	// the intermediate certificate if module is enabled" verification. A
+	// cert's CRL Distribution Point must name a CRL signed by that cert's
+	// own issuer (RFC 5280) -- the intermediate's issuer is the root, so
+	// this points at the root's CRL, not the intermediate's own.
 	if cfg.Modules.Revocation {
-		req.CRLURL = cfg.Server.PublicBaseURL + "/v1/crl/intermediate.crl"
+		req.CRLURL = cfg.Server.PublicBaseURL + "/v1/crl/root.crl"
 		req.OCSPURL = cfg.Server.PublicBaseURL + "/v1/ocsp"
 	}
 

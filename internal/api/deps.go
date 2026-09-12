@@ -49,7 +49,12 @@ type Deps struct {
 	// nil-check before recording.
 	Metrics *observability.Metrics
 
-	CRLBuilder    *revocation.CRLBuilder
-	OCSPResponder *revocation.OCSPResponder
-	TSAResponder  *tsa.Responder
+	// CRLBuilder serves the intermediate CA's CRL (leaf-certificate
+	// revocations); RootCRLBuilder serves the root CA's CRL (revocations
+	// of certificates the root itself issued, i.e. the intermediate) --
+	// see internal/revocation/crl.go's per-CA issuer-serial filtering.
+	CRLBuilder     *revocation.CRLBuilder
+	RootCRLBuilder *revocation.CRLBuilder
+	OCSPResponder  *revocation.OCSPResponder
+	TSAResponder   *tsa.Responder
 }

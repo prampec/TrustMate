@@ -31,9 +31,9 @@ import (
 
 // newTestDeps bootstraps a full CA (root/intermediate/admin/server-tls)
 // against a temp SQLite store and file keystore, then builds a Deps with
-// a real IntermediateIssuer/CRLBuilder/OCSPResponder/TSAResponder -- the
-// same fixtures bootstrap_test.go uses, since only real, chain-verifiable
-// material exercises these handlers meaningfully.
+// a real IntermediateIssuer/CRLBuilder/RootCRLBuilder/OCSPResponder/
+// TSAResponder -- the same fixtures bootstrap_test.go uses, since only
+// real, chain-verifiable material exercises these handlers meaningfully.
 func newTestDeps(t *testing.T, mods ModuleConfig) Deps {
 	t.Helper()
 
@@ -63,6 +63,11 @@ func newTestDeps(t *testing.T, mods ModuleConfig) Deps {
 		t.Fatalf("LoadIntermediateIssuer: %v", err)
 	}
 
+	rootIssuer, err := bootstrap.LoadRootIssuer(context.Background(), st, ks)
+	if err != nil {
+		t.Fatalf("LoadRootIssuer: %v", err)
+	}
+
 	var tsaResponder *tsa.Responder
 	if mods.EnableTSA {
 		tsaIssuer, err := bootstrap.LoadTSAIssuer(context.Background(), st, ks)
@@ -89,7 +94,8 @@ func newTestDeps(t *testing.T, mods ModuleConfig) Deps {
 		Profiles:           registry,
 		Metrics:            observability.NewMetrics(),
 		CRLBuilder:         revocation.NewCRLBuilder(issuer, st.Certificates()),
-		OCSPResponder:      revocation.NewOCSPResponder(issuer, st.Certificates()),
+		RootCRLBuilder:     revocation.NewCRLBuilder(rootIssuer, st.Certificates()),
+		OCSPResponder:      revocation.NewOCSPResponder([]pki.Issuer{rootIssuer, issuer}, st.Certificates()),
 		TSAResponder:       tsaResponder,
 	}
 }

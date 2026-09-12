@@ -34,9 +34,11 @@ var reasonCodes = map[string]int{
 	"cessationOfOperation": ocsp.CessationOfOperation,
 }
 
-// CRLBuilder produces a signed, RFC 5280 CRL for the intermediate CA,
-// lazily regenerated and cached in memory -- no background scheduler, per
-// docs/design.md's Phase 1 scope.
+// CRLBuilder produces a signed, RFC 5280 CRL for one CA (root or
+// intermediate), lazily regenerated and cached in memory -- no background
+// scheduler, per docs/design.md's Phase 1 scope. A CRL must only list
+// certificates issued by its own signer, so one CRLBuilder instance per
+// CA is required -- see CRL's issuer-serial filter below.
 type CRLBuilder struct {
 	issuer pki.Issuer
 	certs  store.CertificateRepository
@@ -46,9 +48,9 @@ type CRLBuilder struct {
 	expires time.Time
 }
 
-// NewCRLBuilder returns a CRLBuilder that signs with issuer (the
-// intermediate CA's certificate and signing key) and lists revoked
-// entries from certs.
+// NewCRLBuilder returns a CRLBuilder that signs with issuer (that CA's
+// certificate and signing key) and lists, from certs, only the revoked
+// certificates issuer itself issued.
 func NewCRLBuilder(issuer pki.Issuer, certs store.CertificateRepository) *CRLBuilder {
 	return &CRLBuilder{issuer: issuer, certs: certs}
 }
@@ -77,8 +79,12 @@ func (b *CRLBuilder) CRL(ctx context.Context) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("revocation: listing revoked certificates: %w", err)
 	}
+	issuerSerial := b.issuer.Cert.SerialNumber.String()
 	entries := make([]x509.RevocationListEntry, 0, len(revoked))
 	for _, rec := range revoked {
+		if rec.IssuerSerial != issuerSerial {
+			continue
+		}
 		serial, ok := new(big.Int).SetString(rec.Serial, 10)
 		if !ok {
 			return nil, fmt.Errorf("revocation: parsing serial %q", rec.Serial)

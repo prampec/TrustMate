@@ -16,20 +16,30 @@ import (
 // past Phase 1, see internal/revocation's package doc).
 const maxOCSPRequestBytes = 64 * 1024
 
-// handleCRL serves the intermediate CA's CRL. net/http.ServeMux's
+// handleCRL serves the root or intermediate CA's CRL. net/http.ServeMux's
 // {name} path wildcards must occupy an entire segment, so
 // "/v1/crl/{ca}.crl" cannot be registered directly; this handler is
 // registered on "/v1/crl/{ca}" and enforces the ".crl" suffix itself.
-// Only "intermediate.crl" is served -- one intermediate CA exists in
-// Phase 1's scope, no multi-CA hierarchy.
+// Only "root.crl" and "intermediate.crl" are served -- one root and one
+// intermediate CA exist in this phase's scope, no multi-CA hierarchy.
 func handleCRL(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ca, ok := strings.CutSuffix(r.PathValue("ca"), ".crl")
-		if !ok || ca != "intermediate" {
+		if !ok {
 			writeError(w, http.StatusNotFound, "not found")
 			return
 		}
-		der, err := deps.CRLBuilder.CRL(r.Context())
+		var builder *revocation.CRLBuilder
+		switch ca {
+		case "intermediate":
+			builder = deps.CRLBuilder
+		case "root":
+			builder = deps.RootCRLBuilder
+		default:
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		der, err := builder.CRL(r.Context())
 		if err != nil {
 			deps.Logger.Error("generating CRL failed", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")

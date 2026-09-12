@@ -77,7 +77,8 @@ first such certificate is the bootstrap admin cert written to
 | `POST /v1/clients` | admin | issue a new API client certificate and assign it a role |
 | `GET /v1/clients` | admin | list API client certificates and their roles |
 | `GET /v1/audit` | admin | issuance/revocation/config-change audit trail (`?limit=N`) |
-| `GET /v1/crl/intermediate.crl` | none | intermediate CA's CRL (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
+| `GET /v1/crl/intermediate.crl` | none | intermediate CA's CRL, lists revoked leaf certificates (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
+| `GET /v1/crl/root.crl` | none | root CA's CRL, lists a revoked intermediate certificate; this is what the intermediate cert's own CDP points at (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
 | `POST /v1/ocsp` | none | RFC 6960 OCSP responder (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
 | `POST /v1/tsa` | none | RFC 3161 Time-Stamp Authority (only when `TRUSTMATE_ENABLE_TSA=true`) |
 | `POST /v1/tsa/rotate` | admin | mint a new TSA signing identity and hot-swap to it immediately (only when `TRUSTMATE_ENABLE_TSA=true`) |

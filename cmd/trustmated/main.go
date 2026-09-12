@@ -17,6 +17,7 @@ import (
 	"github.com/prampec/trustmate/internal/config"
 	"github.com/prampec/trustmate/internal/keystore"
 	"github.com/prampec/trustmate/internal/observability"
+	"github.com/prampec/trustmate/internal/pki"
 	"github.com/prampec/trustmate/internal/profiles"
 	"github.com/prampec/trustmate/internal/revocation"
 	"github.com/prampec/trustmate/internal/store/sqlite"
@@ -74,6 +75,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	rootCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	rootIssuer, err := bootstrap.LoadRootIssuer(rootCtx, db, ks)
+	cancel()
+	if err != nil {
+		logger.Error("loading root CA issuer failed", "err", err)
+		os.Exit(1)
+	}
+
 	mods := api.ModuleConfig{
 		EnableRevocation: cfg.Modules.Revocation,
 		EnableTSA:        cfg.Modules.TSA,
@@ -123,7 +132,8 @@ func main() {
 		Profiles:           profileRegistry,
 		Metrics:            metrics,
 		CRLBuilder:         revocation.NewCRLBuilder(interIssuer, db.Certificates()),
-		OCSPResponder:      revocation.NewOCSPResponder(interIssuer, db.Certificates()),
+		RootCRLBuilder:     revocation.NewCRLBuilder(rootIssuer, db.Certificates()),
+		OCSPResponder:      revocation.NewOCSPResponder([]pki.Issuer{rootIssuer, interIssuer}, db.Certificates()),
 		TSAResponder:       tsaResponder,
 	}, ready)
 

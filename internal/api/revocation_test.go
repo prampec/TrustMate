@@ -51,6 +51,69 @@ func TestGetCRLIntermediate(t *testing.T) {
 	}
 }
 
+func TestGetCRLRoot(t *testing.T) {
+	deps := newTestDeps(t, ModuleConfig{EnableRevocation: true})
+	router := NewRouter(deps, nil)
+
+	rootRecs, err := deps.Store.Certificates().FindByKind(context.Background(), store.CertKindRoot)
+	if err != nil || len(rootRecs) != 1 {
+		t.Fatalf("FindByKind(root) = %v, %v; want 1 row", rootRecs, err)
+	}
+	rootCert := parseCertPEMForTest(t, rootRecs[0].PEM)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/crl/root.crl", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	crl, err := x509.ParseRevocationList(rec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("ParseRevocationList: %v", err)
+	}
+	if err := crl.CheckSignatureFrom(rootCert); err != nil {
+		t.Errorf("root CRL does not verify against root: %v", err)
+	}
+
+	// The intermediate cert's own CDP must name this root CRL, not its
+	// own (RFC 5280: a CRLDP must point to a CRL signed by the cert's
+	// issuer) -- see internal/bootstrap/bootstrap.go's generateIntermediate.
+	if len(deps.IntermediateIssuer.Cert.CRLDistributionPoints) != 1 ||
+		deps.IntermediateIssuer.Cert.CRLDistributionPoints[0] != deps.PublicBaseURL+"/v1/crl/root.crl" {
+		t.Errorf("intermediate CDP = %v, want [%s]", deps.IntermediateIssuer.Cert.CRLDistributionPoints, deps.PublicBaseURL+"/v1/crl/root.crl")
+	}
+}
+
+func parseCertPEMForTest(t *testing.T, data []byte) *x509.Certificate {
+	t.Helper()
+	block, _ := pem.Decode(data)
+	if block == nil {
+		t.Fatal("parseCertPEMForTest: no PEM block found")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("parseCertPEMForTest: %v", err)
+	}
+	return cert
+}
+
+// TestPostOCSPForIntermediateCertSignedByRoot verifies an OCSP query
+// about the intermediate CA's own certificate is answered by root (its
+// actual issuer), not by the intermediate signing for itself -- the OCSP
+// analogue of TestGetCRLRoot's CDP check.
+func TestPostOCSPForIntermediateCertSignedByRoot(t *testing.T) {
+	deps := newTestDeps(t, ModuleConfig{EnableRevocation: true})
+	router := NewRouter(deps, nil)
+
+	rootRecs, err := deps.Store.Certificates().FindByKind(context.Background(), store.CertKindRoot)
+	if err != nil || len(rootRecs) != 1 {
+		t.Fatalf("FindByKind(root) = %v, %v; want 1 row", rootRecs, err)
+	}
+	rootCert := parseCertPEMForTest(t, rootRecs[0].PEM)
+
+	assertOCSPStatus(t, router, rootCert, deps.IntermediateIssuer.Cert, ocsp.Good)
+}
+
 func TestPostOCSPGoodAndUnknownAndMalformed(t *testing.T) {
 	deps := newTestDeps(t, ModuleConfig{EnableRevocation: true})
 	router := NewRouter(deps, nil)

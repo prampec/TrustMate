@@ -194,8 +194,8 @@ func TestRunUsesAbsolutePublicBaseURLInExtensions(t *testing.T) {
 	if len(interCert.IssuingCertificateURL) != 1 || interCert.IssuingCertificateURL[0] != "https://ca.example.test/v1/ca/root.pem" {
 		t.Errorf("intermediate IssuingCertificateURL = %v, want [https://ca.example.test/v1/ca/root.pem]", interCert.IssuingCertificateURL)
 	}
-	if len(interCert.CRLDistributionPoints) != 1 || interCert.CRLDistributionPoints[0] != "https://ca.example.test/v1/crl/intermediate.crl" {
-		t.Errorf("intermediate CRLDistributionPoints = %v, want [https://ca.example.test/v1/crl/intermediate.crl]", interCert.CRLDistributionPoints)
+	if len(interCert.CRLDistributionPoints) != 1 || interCert.CRLDistributionPoints[0] != "https://ca.example.test/v1/crl/root.crl" {
+		t.Errorf("intermediate CRLDistributionPoints = %v, want [https://ca.example.test/v1/crl/root.crl]", interCert.CRLDistributionPoints)
 	}
 	if len(interCert.OCSPServer) != 1 || interCert.OCSPServer[0] != "https://ca.example.test/v1/ocsp" {
 		t.Errorf("intermediate OCSPServer = %v, want [https://ca.example.test/v1/ocsp]", interCert.OCSPServer)
