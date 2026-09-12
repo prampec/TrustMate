@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/prampec/trustmate/internal/pki"
 	"github.com/prampec/trustmate/internal/profiles"
+	"github.com/prampec/trustmate/internal/store"
 )
 
 func TestGetCRLIntermediate(t *testing.T) {
@@ -56,7 +58,7 @@ func TestPostOCSPGoodAndUnknownAndMalformed(t *testing.T) {
 	issueRec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{
 		Profile: "document-signing",
 		CSR:     string(genCSRPEM(t, "known-leaf")),
-	})
+	}, adminCert(t, deps))
 	var issued issueCertificateResponse
 	if err := json.Unmarshal(issueRec.Body.Bytes(), &issued); err != nil {
 		t.Fatal(err)
@@ -77,6 +79,120 @@ func TestPostOCSPGoodAndUnknownAndMalformed(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("garbage OCSP request status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestRevokeCertificateReflectsInCRLAndOCSP(t *testing.T) {
+	deps := newTestDeps(t, ModuleConfig{EnableRevocation: true})
+	router := NewRouter(deps, nil)
+	admin := adminCert(t, deps)
+
+	issueRec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{
+		Profile: "document-signing",
+		CSR:     string(genCSRPEM(t, "to-be-revoked")),
+	}, admin)
+	var issued issueCertificateResponse
+	if err := json.Unmarshal(issueRec.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(issued.PEM))
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertOCSPStatus(t, router, deps.IntermediateIssuer.Cert, leaf, ocsp.Good)
+
+	revokeRec := postJSON(t, router, "/v1/certificates/"+issued.Serial+"/revoke", map[string]string{
+		"reason": "keyCompromise",
+	}, admin)
+	if revokeRec.Code != http.StatusOK {
+		t.Fatalf("revoke status = %d, want %d; body: %s", revokeRec.Code, http.StatusOK, revokeRec.Body.String())
+	}
+
+	// A second revoke of the same serial is a conflict.
+	rec := postJSON(t, router, "/v1/certificates/"+issued.Serial+"/revoke", nil, admin)
+	if rec.Code != http.StatusConflict {
+		t.Errorf("second revoke status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+
+	// Revoking an unknown serial is a 404.
+	rec = postJSON(t, router, "/v1/certificates/does-not-exist/revoke", nil, admin)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("revoke unknown serial status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	assertOCSPStatus(t, router, deps.IntermediateIssuer.Cert, leaf, ocsp.Revoked)
+
+	crlRec := getAs(t, router, "/v1/crl/intermediate.crl", nil)
+	if crlRec.Code != http.StatusOK {
+		t.Fatalf("GET CRL status = %d, want %d", crlRec.Code, http.StatusOK)
+	}
+	crl, err := x509.ParseRevocationList(crlRec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("ParseRevocationList: %v", err)
+	}
+	found := false
+	for _, e := range crl.RevokedCertificateEntries {
+		if e.SerialNumber.Cmp(leaf.SerialNumber) == 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("revoked serial %v not found in CRL entries %v", leaf.SerialNumber, crl.RevokedCertificateEntries)
+	}
+}
+
+func TestRevokeCertificateRejectsRootAndIntermediate(t *testing.T) {
+	deps := newTestDeps(t, ModuleConfig{})
+	router := NewRouter(deps, nil)
+	admin := adminCert(t, deps)
+
+	for _, kind := range []struct {
+		name  string
+		field func() (string, error)
+	}{
+		{"root", func() (string, error) {
+			roots, err := deps.Store.Certificates().FindByKind(context.Background(), store.CertKindRoot)
+			if err != nil || len(roots) == 0 {
+				return "", err
+			}
+			return roots[0].Serial, nil
+		}},
+		{"intermediate", func() (string, error) {
+			return deps.IntermediateIssuer.Cert.SerialNumber.String(), nil
+		}},
+	} {
+		serial, err := kind.field()
+		if err != nil || serial == "" {
+			t.Fatalf("%s: resolving serial: %v", kind.name, err)
+		}
+		rec := postJSON(t, router, "/v1/certificates/"+serial+"/revoke", nil, admin)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("revoking %s (serial %s): status = %d, want %d", kind.name, serial, rec.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestRevokeCertificateRejectsUnknownReason(t *testing.T) {
+	deps := newTestDeps(t, ModuleConfig{EnableRevocation: true})
+	router := NewRouter(deps, nil)
+	admin := adminCert(t, deps)
+
+	issueRec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{
+		Profile: "document-signing",
+		CSR:     string(genCSRPEM(t, "x")),
+	}, admin)
+	var issued issueCertificateResponse
+	if err := json.Unmarshal(issueRec.Body.Bytes(), &issued); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postJSON(t, router, "/v1/certificates/"+issued.Serial+"/revoke", map[string]string{
+		"reason": "not-a-real-reason",
+	}, admin)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 

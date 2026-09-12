@@ -19,9 +19,14 @@ import (
 // whether Run just bootstrapped that material or it already existed from
 // an earlier run.
 //
-// Client-certificate verification is deliberately left at
-// tls.NoClientCert: enforcing mTLS is Phase 3 per docs/design.md's
-// roadmap, and Phase 0 has no protected admin route yet to gate.
+// ClientAuth is VerifyClientCertIfGiven, not RequireAndVerifyClientCert:
+// several routes (/v1/crl, /v1/ocsp, /v1/tsa, /v1/ca/*.pem, /healthz,
+// /readyz, /metrics) are meant to stay open to callers with no client
+// cert at all. Any client cert that IS presented must chain to this CA
+// (ClientCAs below) or the TLS handshake itself rejects it; per-route
+// role requirements are then enforced in internal/api's requireRole
+// middleware, which needs a verified peer certificate to look up a role
+// for.
 func LoadServerTLSConfig(ctx context.Context, st store.Store, ks keystore.KeyStore) (*tls.Config, error) {
 	leafRec, err := st.Certificates().GetLatestByProfile(ctx, profiles.ServerTLS().Name)
 	if err != nil {
@@ -35,6 +40,15 @@ func LoadServerTLSConfig(ctx context.Context, st store.Store, ks keystore.KeySto
 		return nil, fmt.Errorf("bootstrap: no intermediate certificate found")
 	}
 	interRec := interRecs[len(interRecs)-1]
+
+	rootRecs, err := st.Certificates().FindByKind(ctx, store.CertKindRoot)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: loading root certificate: %w", err)
+	}
+	if len(rootRecs) == 0 {
+		return nil, fmt.Errorf("bootstrap: no root certificate found")
+	}
+	rootRec := rootRecs[len(rootRecs)-1]
 
 	leafDER, err := derFromPEM(leafRec.PEM)
 	if err != nil {
@@ -50,9 +64,18 @@ func LoadServerTLSConfig(ctx context.Context, st store.Store, ks keystore.KeySto
 		return nil, fmt.Errorf("bootstrap: loading server-tls private key: %w", err)
 	}
 
+	clientCAs := x509.NewCertPool()
+	if !clientCAs.AppendCertsFromPEM(interRec.PEM) {
+		return nil, fmt.Errorf("bootstrap: adding intermediate certificate to client CA pool")
+	}
+	if !clientCAs.AppendCertsFromPEM(rootRec.PEM) {
+		return nil, fmt.Errorf("bootstrap: adding root certificate to client CA pool")
+	}
+
 	return &tls.Config{
 		MinVersion: tls.VersionTLS12,
-		ClientAuth: tls.NoClientCert, // TODO(phase 3): require/verify the admin mTLS client cert.
+		ClientAuth: tls.VerifyClientCertIfGiven,
+		ClientCAs:  clientCAs,
 		Certificates: []tls.Certificate{{
 			Certificate: [][]byte{leafDER, interDER},
 			PrivateKey:  signer,

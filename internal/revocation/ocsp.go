@@ -22,11 +22,11 @@ const OCSPValidity = 1 * time.Hour
 // bad request.
 var ErrMalformedRequest = errors.New("revocation: malformed OCSP request")
 
-// OCSPResponder answers RFC 6960 OCSP requests. No revoke endpoint
-// exists yet in this phase (see docs/design.md's Phase 1 scope), so it
-// only distinguishes a known serial ("good") from an unknown one --
-// never "revoked". The responder cert is the intermediate itself; there
-// is no delegated OCSP-signing identity in Phase 1.
+// OCSPResponder answers RFC 6960 OCSP requests: "good" for a known,
+// unrevoked serial, "revoked" once POST /v1/certificates/{serial}/revoke
+// has run, "unknown" for a serial this CA never issued. The responder
+// cert is the intermediate itself; there is no delegated OCSP-signing
+// identity in this phase.
 type OCSPResponder struct {
 	issuer pki.Issuer
 	certs  store.CertificateRepository
@@ -47,8 +47,14 @@ func (o *OCSPResponder) Respond(ctx context.Context, rawRequest []byte) ([]byte,
 	}
 
 	status := ocsp.Unknown
-	if _, err := o.certs.GetBySerial(ctx, req.SerialNumber.String()); err == nil {
-		status = ocsp.Good
+	var revokedAt time.Time
+	if rec, err := o.certs.GetBySerial(ctx, req.SerialNumber.String()); err == nil {
+		if rec.RevokedAt != nil {
+			status = ocsp.Revoked
+			revokedAt = *rec.RevokedAt
+		} else {
+			status = ocsp.Good
+		}
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return nil, fmt.Errorf("revocation: looking up serial %s: %w", req.SerialNumber, err)
 	}
@@ -59,6 +65,7 @@ func (o *OCSPResponder) Respond(ctx context.Context, rawRequest []byte) ([]byte,
 		SerialNumber: req.SerialNumber,
 		ThisUpdate:   now,
 		NextUpdate:   now.Add(OCSPValidity),
+		RevokedAt:    revokedAt,
 	}
 	resp, err := ocsp.CreateResponse(o.issuer.Cert, o.issuer.Cert, tmpl, o.issuer.Signer)
 	if err != nil {

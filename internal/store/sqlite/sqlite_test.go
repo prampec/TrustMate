@@ -152,6 +152,101 @@ func TestProfileRepositoryVersioning(t *testing.T) {
 	}
 }
 
+func TestCertificateRepositoryRevoke(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+	repo := db.Certificates()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := repo.Create(ctx, store.CertificateRecord{
+		Serial: "cc", Kind: store.CertKindLeaf, Subject: "CN=leaf",
+		NotBefore: now, NotAfter: now.Add(time.Hour), PEM: []byte("leaf-pem"), CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	revokedAt := now.Add(time.Minute)
+	if err := repo.Revoke(ctx, "cc", "keyCompromise", revokedAt); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+
+	got, err := repo.GetBySerial(ctx, "cc")
+	if err != nil {
+		t.Fatalf("GetBySerial: %v", err)
+	}
+	if got.RevokedAt == nil || !got.RevokedAt.Equal(revokedAt) {
+		t.Errorf("RevokedAt = %v, want %v", got.RevokedAt, revokedAt)
+	}
+	if got.RevocationReason != "keyCompromise" {
+		t.Errorf("RevocationReason = %q, want keyCompromise", got.RevocationReason)
+	}
+
+	if err := repo.Revoke(ctx, "cc", "superseded", now); err != store.ErrAlreadyRevoked {
+		t.Errorf("second Revoke error = %v, want ErrAlreadyRevoked", err)
+	}
+	if err := repo.Revoke(ctx, "does-not-exist", "unspecified", now); err != store.ErrNotFound {
+		t.Errorf("Revoke(missing) error = %v, want ErrNotFound", err)
+	}
+
+	revoked, err := repo.FindRevoked(ctx)
+	if err != nil {
+		t.Fatalf("FindRevoked: %v", err)
+	}
+	if len(revoked) != 1 || revoked[0].Serial != "cc" {
+		t.Fatalf("FindRevoked = %+v, want 1 entry for serial cc", revoked)
+	}
+}
+
+func TestClientRoleRepository(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := db.Certificates().Create(ctx, store.CertificateRecord{
+		Serial: "dd", Kind: store.CertKindLeaf, Subject: "CN=client",
+		NotBefore: now, NotAfter: now.Add(time.Hour), PEM: []byte("client-pem"), CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	repo := db.ClientRoles()
+	if err := repo.Assign(ctx, store.ClientRoleRecord{CertSerial: "dd", Role: store.RoleManager, CreatedAt: now}); err != nil {
+		t.Fatalf("Assign: %v", err)
+	}
+
+	got, err := repo.Get(ctx, "dd")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Role != store.RoleManager {
+		t.Errorf("Role = %q, want manager", got.Role)
+	}
+
+	// Assign is upsert-by-serial: reassigning to admin replaces the role.
+	if err := repo.Assign(ctx, store.ClientRoleRecord{CertSerial: "dd", Role: store.RoleAdmin, CreatedAt: now}); err != nil {
+		t.Fatalf("re-Assign: %v", err)
+	}
+	got, err = repo.Get(ctx, "dd")
+	if err != nil {
+		t.Fatalf("Get after re-Assign: %v", err)
+	}
+	if got.Role != store.RoleAdmin {
+		t.Errorf("Role after re-Assign = %q, want admin", got.Role)
+	}
+
+	if _, err := repo.Get(ctx, "does-not-exist"); err != store.ErrNotFound {
+		t.Errorf("Get(missing) error = %v, want ErrNotFound", err)
+	}
+
+	all, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("List = %+v, want 1 entry", all)
+	}
+}
+
 func TestAuditRepositoryAppendAndList(t *testing.T) {
 	db := openTest(t)
 	ctx := context.Background()

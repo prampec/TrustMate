@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/prampec/trustmate/internal/revocation"
 )
@@ -42,32 +43,47 @@ func handleCRL(deps Deps) http.HandlerFunc {
 
 func handleOCSP(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
 		if ct := r.Header.Get("Content-Type"); ct != "" && ct != "application/ocsp-request" {
 			writeError(w, http.StatusBadRequest, "unsupported content type")
+			recordOCSPMetrics(deps, "bad_request", start)
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxOCSPRequestBytes+1))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "reading request body failed")
+			recordOCSPMetrics(deps, "bad_request", start)
 			return
 		}
 		if len(body) > maxOCSPRequestBytes {
 			writeError(w, http.StatusBadRequest, "request body too large")
+			recordOCSPMetrics(deps, "bad_request", start)
 			return
 		}
 
 		resp, err := deps.OCSPResponder.Respond(r.Context(), body)
 		if errors.Is(err, revocation.ErrMalformedRequest) {
 			writeError(w, http.StatusBadRequest, "invalid OCSP request")
+			recordOCSPMetrics(deps, "bad_request", start)
 			return
 		}
 		if err != nil {
 			deps.Logger.Error("OCSP responder failed", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
+			recordOCSPMetrics(deps, "error", start)
 			return
 		}
 		w.Header().Set("Content-Type", "application/ocsp-response")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(resp)
+		recordOCSPMetrics(deps, "ok", start)
 	}
+}
+
+func recordOCSPMetrics(deps Deps, status string, start time.Time) {
+	if deps.Metrics == nil {
+		return
+	}
+	deps.Metrics.OCSPRequestsTotal.WithLabelValues(status).Inc()
+	deps.Metrics.OCSPRequestDuration.Observe(time.Since(start).Seconds())
 }

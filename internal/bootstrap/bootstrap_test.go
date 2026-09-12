@@ -123,6 +123,31 @@ func TestRunGeneratesFiveCertificatesAndBootstrapOutput(t *testing.T) {
 	}
 }
 
+func TestRunAssignsAdminRoleToBootstrapAdminCert(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Defaults()
+	cfg.Bootstrap.OutputDir = filepath.Join(t.TempDir(), "bootstrap")
+	st := newTestStore(t)
+	ks := newTestKeyStore(t)
+
+	if _, err := Run(ctx, discardLogger(), cfg, st, ks); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	adminRec, err := st.Certificates().GetLatestByProfile(ctx, "default")
+	if err != nil {
+		t.Fatalf("GetLatestByProfile(default): %v", err)
+	}
+
+	roleRec, err := st.ClientRoles().Get(ctx, adminRec.Serial)
+	if err != nil {
+		t.Fatalf("ClientRoles().Get(admin serial): %v", err)
+	}
+	if roleRec.Role != store.RoleAdmin {
+		t.Errorf("bootstrap admin cert role = %q, want admin", roleRec.Role)
+	}
+}
+
 func TestRunIsIdempotentAndNeverCallsGenerateOnRestart(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Defaults()

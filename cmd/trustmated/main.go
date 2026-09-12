@@ -17,6 +17,7 @@ import (
 	"github.com/prampec/trustmate/internal/config"
 	"github.com/prampec/trustmate/internal/keystore"
 	"github.com/prampec/trustmate/internal/observability"
+	"github.com/prampec/trustmate/internal/profiles"
 	"github.com/prampec/trustmate/internal/revocation"
 	"github.com/prampec/trustmate/internal/store/sqlite"
 	"github.com/prampec/trustmate/internal/tsa"
@@ -89,16 +90,26 @@ func main() {
 		}
 		tsaResponder = tsa.NewResponder(tsaIssuer, interIssuer.Cert)
 	}
+	metrics := observability.NewMetrics()
 	ready := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		return db.Ping(ctx)
+		err := db.Ping(ctx)
+		if err == nil {
+			metrics.StoreUp.Set(1)
+		} else {
+			metrics.StoreUp.Set(0)
+		}
+		return err
 	}
 
-	// POST /v1/certificates has no request-level auth in Phase 1 -- see
-	// docs/design.md's Phase 3 roadmap entry. Not gated behind any flag;
-	// it always applies while this phase's code is running.
-	logger.Warn("POST /v1/certificates is unauthenticated in this phase -- anyone reaching the listener can issue a certificate; see docs/design.md Phase 3")
+	profileCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	profileRegistry, err := profiles.NewRegistry(profileCtx, db.Profiles(), cfg.Profiles.Dir)
+	cancel()
+	if err != nil {
+		logger.Error("loading profile registry failed", "err", err)
+		os.Exit(1)
+	}
 
 	router := api.NewRouter(api.Deps{
 		Logger:             logger,
@@ -106,7 +117,9 @@ func main() {
 		IntermediateIssuer: interIssuer,
 		PublicBaseURL:      cfg.Server.PublicBaseURL,
 		ModuleConfig:       mods,
-		CRLBuilder:         revocation.NewCRLBuilder(interIssuer),
+		Profiles:           profileRegistry,
+		Metrics:            metrics,
+		CRLBuilder:         revocation.NewCRLBuilder(interIssuer, db.Certificates()),
 		OCSPResponder:      revocation.NewOCSPResponder(interIssuer, db.Certificates()),
 		TSAResponder:       tsaResponder,
 	}, ready)

@@ -2,15 +2,29 @@ package api
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/prampec/trustmate/internal/bootstrap"
 	"github.com/prampec/trustmate/internal/config"
 	"github.com/prampec/trustmate/internal/keystore"
+	"github.com/prampec/trustmate/internal/observability"
+	"github.com/prampec/trustmate/internal/pki"
+	"github.com/prampec/trustmate/internal/profiles"
 	"github.com/prampec/trustmate/internal/revocation"
+	"github.com/prampec/trustmate/internal/store"
 	"github.com/prampec/trustmate/internal/store/sqlite"
 	"github.com/prampec/trustmate/internal/tsa"
 )
@@ -58,14 +72,104 @@ func newTestDeps(t *testing.T, mods ModuleConfig) Deps {
 		tsaResponder = tsa.NewResponder(tsaIssuer, issuer.Cert)
 	}
 
+	registry, err := profiles.NewRegistry(context.Background(), st.Profiles(), "")
+	if err != nil {
+		t.Fatalf("profiles.NewRegistry: %v", err)
+	}
+
 	return Deps{
 		Logger:             logger,
 		Store:              st,
 		IntermediateIssuer: issuer,
 		PublicBaseURL:      cfg.Server.PublicBaseURL,
 		ModuleConfig:       mods,
-		CRLBuilder:         revocation.NewCRLBuilder(issuer),
+		Profiles:           registry,
+		Metrics:            observability.NewMetrics(),
+		CRLBuilder:         revocation.NewCRLBuilder(issuer, st.Certificates()),
 		OCSPResponder:      revocation.NewOCSPResponder(issuer, st.Certificates()),
 		TSAResponder:       tsaResponder,
 	}
+}
+
+// adminCert returns the bootstrap-issued admin certificate, which
+// newTestDeps' bootstrap.Run call already assigned the admin role to --
+// see internal/bootstrap/bootstrap.go. Tests attach it to a request via
+// withClientCert to exercise routes gated by requireRole.
+func adminCert(t *testing.T, deps Deps) *x509.Certificate {
+	t.Helper()
+	rec, err := deps.Store.Certificates().GetLatestByProfile(context.Background(), profiles.Default().Name)
+	if err != nil {
+		t.Fatalf("GetLatestByProfile(default): %v", err)
+	}
+	block, _ := pem.Decode(rec.PEM)
+	if block == nil {
+		t.Fatal("adminCert: admin certificate PEM does not decode")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("adminCert: parsing certificate: %v", err)
+	}
+	return cert
+}
+
+// withClientCert simulates the mTLS peer certificate crypto/tls would
+// have set on r.TLS after a real handshake -- httptest.NewRequest never
+// performs one, so requireRole (internal/api/auth.go) has nothing to read
+// unless a test sets this itself.
+func withClientCert(r *http.Request, cert *x509.Certificate) *http.Request {
+	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	return r
+}
+
+// issueClientCert issues a fresh client-auth leaf certificate against
+// deps.IntermediateIssuer and, unless role is empty, assigns it role in
+// client_roles -- letting auth tests exercise a cert with no role, a
+// manager-only cert, and an admin cert without reusing the single
+// bootstrap admin identity for every case.
+func issueClientCert(t *testing.T, deps Deps, cn string, role store.ClientRole) *x509.Certificate {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := profiles.Default().WithIssuerURLs(deps.PublicBaseURL, deps.ModuleConfig.EnableRevocation)
+	now := time.Now()
+	cert, err := pki.IssueLeaf(profile, pkix.Name{CommonName: cn}, key.Public(),
+		deps.IntermediateIssuer, now, now.Add(profile.Validity), nil)
+	if err != nil {
+		t.Fatalf("IssueLeaf: %v", err)
+	}
+	if err := deps.Store.Certificates().Create(context.Background(), store.CertificateRecord{
+		Serial:       cert.SerialNumber.String(),
+		Kind:         store.CertKindLeaf,
+		ProfileName:  profile.Name,
+		Subject:      cert.Subject.String(),
+		IssuerSerial: deps.IntermediateIssuer.Cert.SerialNumber.String(),
+		NotBefore:    cert.NotBefore,
+		NotAfter:     cert.NotAfter,
+		PEM:          pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}),
+		CreatedAt:    now.UTC(),
+	}); err != nil {
+		t.Fatalf("Certificates().Create: %v", err)
+	}
+	if role != "" {
+		if err := deps.Store.ClientRoles().Assign(context.Background(), store.ClientRoleRecord{
+			CertSerial: cert.SerialNumber.String(), Role: role, CreatedAt: now.UTC(),
+		}); err != nil {
+			t.Fatalf("ClientRoles().Assign: %v", err)
+		}
+	}
+	return cert
+}
+
+// getAs issues an authenticated GET, or an anonymous one if cert is nil.
+func getAs(t *testing.T, router http.Handler, path string, cert *x509.Certificate) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if cert != nil {
+		withClientCert(req, cert)
+	}
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec
 }

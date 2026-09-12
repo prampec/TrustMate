@@ -52,40 +52,75 @@ set via `TRUSTMATE_CONFIG_FILE`):
 | `TRUSTMATE_KEYSTORE_DIR` | `./data/keys` | encrypted private key storage directory |
 | `TRUSTMATE_BOOTSTRAP_OUTPUT_DIR` | `./data/bootstrap` | where first-run cert/key material is written |
 | `TRUSTMATE_KEK` | *(required)* | keystore encryption passphrase (or use `TRUSTMATE_KEK_FILE` to read it from a mounted secret file) |
-| `TRUSTMATE_PROFILES_DIR` | *(none)* | optional directory of extra profile definitions |
+| `TRUSTMATE_PROFILES_DIR` | *(none)* | directory of extra profile definitions (YAML), loaded alongside the built-ins |
 
-Health/ops endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics` (all
-served over HTTPS, like everything else).
+Health/ops endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics` (real
+Prometheus exposition text as of Phase 3; all served over HTTPS, like
+everything else).
 
-CA/revocation/TSA endpoints (Phase 1-2; `POST /v1/certificates` has no
-request-level auth yet — see `docs/design.md`'s Phase 3 entry):
+Every route below except the public PKI ones (`/v1/ca/*.pem`, `/v1/crl`,
+`/v1/ocsp`, `/v1/tsa`) requires a client certificate presenting a role
+assigned via `client_roles` — see `docs/design.md`'s Phase 3 entry. The
+first such certificate is the bootstrap admin cert written to
+`admin.pem`/`admin-key.pem` in the bootstrap output dir; use
+`trustmate-admin clients add` to onboard more.
 
-| Endpoint | Purpose |
-|---|---|
-| `GET /v1/ca/root.pem` | root CA certificate (AIA `caIssuers` target) |
-| `GET /v1/ca/intermediate.pem` | intermediate CA certificate (AIA `caIssuers` target) |
-| `POST /v1/certificates` | issue a leaf certificate from a CSR against a named profile (`{"profile": ..., "csr": "<PEM>"}`) |
-| `GET /v1/certificates/{serial}` | look up an issued certificate by serial |
-| `GET /v1/crl/intermediate.crl` | intermediate CA's CRL (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
-| `POST /v1/ocsp` | RFC 6960 OCSP responder (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
-| `POST /v1/tsa` | RFC 3161 Time-Stamp Authority (only when `TRUSTMATE_ENABLE_TSA=true`) |
+| Endpoint | Role | Purpose |
+|---|---|---|
+| `GET /v1/ca/root.pem` | none | root CA certificate (AIA `caIssuers` target) |
+| `GET /v1/ca/intermediate.pem` | none | intermediate CA certificate (AIA `caIssuers` target) |
+| `POST /v1/certificates` | manager | issue a leaf certificate from a CSR against a named profile (`{"profile": ..., "csr": "<PEM>"}`) |
+| `GET /v1/certificates/{serial}` | manager | look up an issued certificate by serial |
+| `POST /v1/certificates/{serial}/revoke` | manager | revoke a certificate (`{"reason": "keyCompromise"}`, optional) |
+| `GET /v1/profiles` | manager | list built-in and config-loaded certificate profiles |
+| `POST /v1/profiles/reload` | admin | re-scan `TRUSTMATE_PROFILES_DIR` without a restart |
+| `POST /v1/clients` | admin | issue a new API client certificate and assign it a role |
+| `GET /v1/clients` | admin | list API client certificates and their roles |
+| `GET /v1/audit` | admin | issuance/revocation/config-change audit trail (`?limit=N`) |
+| `GET /v1/crl/intermediate.crl` | none | intermediate CA's CRL (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
+| `POST /v1/ocsp` | none | RFC 6960 OCSP responder (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
+| `POST /v1/tsa` | none | RFC 3161 Time-Stamp Authority (only when `TRUSTMATE_ENABLE_TSA=true`) |
+
+## Operator CLIs
+
+`trustmate-admin` and `trustmate-management` are thin mTLS REST clients
+over the endpoints above (see `internal/cliclient`). Connection flags
+(`--server`, `--cert`, `--key`, `--ca`) default from
+`TRUSTMATE_CLIENT_{SERVER,CERT,KEY,CA}`.
+
+```sh
+trustmate-admin profiles list
+trustmate-admin profiles reload
+trustmate-admin clients add --csr=new-client.csr --role=manager
+trustmate-admin clients list
+trustmate-admin audit list --limit=50
+
+trustmate-management certificates issue --profile=document-signing --csr=leaf.csr
+trustmate-management certificates get <serial>
+trustmate-management certificates revoke <serial> --reason=keyCompromise
+```
+
+CA/TSA private-key rotation is intentionally not part of either CLI yet —
+see `docs/design.md`'s Phase 3 entry.
 
 ## Layout
 
 ```
-cmd/trustmated/       service entrypoint
-cmd/trustmate-admin/  operator CLI (not implemented yet — phase 3)
-internal/api/         REST surface + health/metrics/logging
-internal/bootstrap/   first-run CA/admin/server-tls/tsa cert generation
-internal/config/      configuration loading (YAML file + env overrides)
-internal/pki/         CA core: certificate issuance
-internal/revocation/  CRL + OCSP responder
-internal/tsa/         RFC 3161 Time-Stamp Authority, own bootstrap-issued signing identity
-internal/profiles/    certificate profile definitions (config/code)
-internal/keystore/    encrypted file-backed private key storage
-internal/store/       issued-cert ledger, profiles, audit log (SQLite)
-internal/observability/ structured logging setup
-docs/design.md        full product design
+cmd/trustmated/          service entrypoint
+cmd/trustmate-admin/     operator CLI: profiles, client roster, audit
+cmd/trustmate-management/ operator CLI: certificate issue/get/revoke
+internal/api/            REST surface + RBAC + health/metrics/logging
+internal/bootstrap/      first-run CA/admin/server-tls/tsa cert generation
+internal/cliclient/      shared mTLS REST client for both operator CLIs
+internal/config/         configuration loading (YAML file + env overrides)
+internal/pki/            CA core: certificate issuance
+internal/revocation/     CRL + OCSP responder
+internal/tsa/            RFC 3161 Time-Stamp Authority, own bootstrap-issued signing identity
+internal/profiles/       certificate profile definitions (built-in + config-loaded registry)
+internal/keystore/       encrypted file-backed private key storage
+internal/store/          issued-cert ledger, profiles, client roles, audit log (SQLite)
+internal/observability/  structured logging + Prometheus metrics
+docs/design.md           full product design
 ```
 
 ## License

@@ -32,7 +32,9 @@ func genCSRPEM(t *testing.T, cn string) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
 }
 
-func postJSON(t *testing.T, router http.Handler, path string, body any) *httptest.ResponseRecorder {
+// postJSON issues an authenticated POST (as cert, or anonymously if cert
+// is nil) with body JSON-encoded.
+func postJSON(t *testing.T, router http.Handler, path string, body any, cert *x509.Certificate) *httptest.ResponseRecorder {
 	t.Helper()
 	data, err := json.Marshal(body)
 	if err != nil {
@@ -40,6 +42,9 @@ func postJSON(t *testing.T, router http.Handler, path string, body any) *httptes
 	}
 	req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(data))
 	req.Header.Set("Content-Type", "application/json")
+	if cert != nil {
+		withClientCert(req, cert)
+	}
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	return rec
@@ -52,7 +57,7 @@ func TestIssueCertificateHappyPath(t *testing.T) {
 	rec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{
 		Profile: "document-signing",
 		CSR:     string(genCSRPEM(t, "doc-signer")),
-	})
+	}, adminCert(t, deps))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
 	}
@@ -120,7 +125,7 @@ func TestIssueCertificateUnknownProfile(t *testing.T) {
 	rec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{
 		Profile: "does-not-exist",
 		CSR:     string(genCSRPEM(t, "x")),
-	})
+	}, adminCert(t, deps))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
@@ -139,7 +144,7 @@ func TestIssueCertificateTamperedCSR(t *testing.T) {
 	rec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{
 		Profile: "document-signing",
 		CSR:     string(tamperedPEM),
-	})
+	}, adminCert(t, deps))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
@@ -149,28 +154,40 @@ func TestIssueCertificateMissingFields(t *testing.T) {
 	deps := newTestDeps(t, ModuleConfig{})
 	router := NewRouter(deps, nil)
 
-	rec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{})
+	rec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{}, adminCert(t, deps))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestIssueCertificateRequiresClientCertificate(t *testing.T) {
+	deps := newTestDeps(t, ModuleConfig{})
+	router := NewRouter(deps, nil)
+
+	rec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{
+		Profile: "document-signing",
+		CSR:     string(genCSRPEM(t, "doc-signer")),
+	}, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
 
 func TestGetCertificateBySerial(t *testing.T) {
 	deps := newTestDeps(t, ModuleConfig{})
 	router := NewRouter(deps, nil)
+	admin := adminCert(t, deps)
 
 	issueRec := postJSON(t, router, "/v1/certificates", issueCertificateRequest{
 		Profile: "document-signing",
 		CSR:     string(genCSRPEM(t, "doc-signer")),
-	})
+	}, admin)
 	var issued issueCertificateResponse
 	if err := json.Unmarshal(issueRec.Body.Bytes(), &issued); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/certificates/"+issued.Serial, nil)
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	rec := getAs(t, router, "/v1/certificates/"+issued.Serial, admin)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
@@ -182,9 +199,7 @@ func TestGetCertificateBySerial(t *testing.T) {
 		t.Errorf("Serial = %q, want %q", got.Serial, issued.Serial)
 	}
 
-	req = httptest.NewRequest(http.MethodGet, "/v1/certificates/does-not-exist", nil)
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
+	rec = getAs(t, router, "/v1/certificates/does-not-exist", admin)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("unknown serial status = %d, want %d", rec.Code, http.StatusNotFound)
 	}

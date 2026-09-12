@@ -71,3 +71,7 @@ func (s *SQLiteStore) Profiles() store.ProfileRepository {
 func (s *SQLiteStore) Audit() store.AuditRepository {
 	return auditRepository{db: s.db}
 }
+
+func (s *SQLiteStore) ClientRoles() store.ClientRoleRepository {
+	return clientRoleRepository{db: s.db}
+}

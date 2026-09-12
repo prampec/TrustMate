@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/prampec/trustmate/internal/store"
 )
 
@@ -31,13 +33,25 @@ func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("GET /readyz", handleReadyz(ready))
-	mux.HandleFunc("GET /metrics", handleMetrics)
+	mux.Handle("GET /metrics", handleMetrics(deps))
 
-	// pki core (certificate issuance) is always on.
+	// pki core (certificate issuance) is always on. Public PKI artifact
+	// distribution (root/intermediate CA certs) needs no auth; everything
+	// that reads or mutates the certificate ledger requires at least
+	// manager, per docs/design.md's Phase 3 roadmap entry.
 	mux.HandleFunc("GET /v1/ca/root.pem", handleCAPem(deps, store.CertKindRoot))
 	mux.HandleFunc("GET /v1/ca/intermediate.pem", handleCAPem(deps, store.CertKindIntermediate))
-	mux.HandleFunc("POST /v1/certificates", handleIssueCertificate(deps))
-	mux.HandleFunc("GET /v1/certificates/{serial}", handleGetCertificate(deps))
+	mux.HandleFunc("POST /v1/certificates", requireRole(deps, store.RoleManager, handleIssueCertificate(deps)))
+	mux.HandleFunc("GET /v1/certificates/{serial}", requireRole(deps, store.RoleManager, handleGetCertificate(deps)))
+	mux.HandleFunc("POST /v1/certificates/{serial}/revoke", requireRole(deps, store.RoleManager, handleRevokeCertificate(deps)))
+
+	mux.HandleFunc("GET /v1/profiles", requireRole(deps, store.RoleManager, handleListProfiles(deps)))
+	mux.HandleFunc("POST /v1/profiles/reload", requireRole(deps, store.RoleAdmin, handleReloadProfiles(deps)))
+
+	mux.HandleFunc("POST /v1/clients", requireRole(deps, store.RoleAdmin, handleIssueClient(deps)))
+	mux.HandleFunc("GET /v1/clients", requireRole(deps, store.RoleAdmin, handleListClients(deps)))
+
+	mux.HandleFunc("GET /v1/audit", requireRole(deps, store.RoleAdmin, handleListAudit(deps)))
 
 	if deps.ModuleConfig.EnableRevocation {
 		mux.HandleFunc("GET /v1/crl/{ca}", handleCRL(deps))
@@ -71,12 +85,17 @@ func handleReadyz(ready ReadyChecker) http.HandlerFunc {
 	}
 }
 
-// handleMetrics is a placeholder emitting an empty Prometheus exposition
-// body. Real metrics wiring (issuance counts, OCSP/TSA latency, datastore
-// health) lands in phase 3 — see docs/design.md.
-func handleMetrics(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	w.WriteHeader(http.StatusOK)
+// handleMetrics serves Prometheus exposition text from deps.Metrics.
+// When deps.Metrics is nil (tests that don't wire metrics up), it falls
+// back to the pre-Phase-3 empty-body placeholder rather than panicking.
+func handleMetrics(deps Deps) http.Handler {
+	if deps.Metrics == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+			w.WriteHeader(http.StatusOK)
+		})
+	}
+	return promhttp.HandlerFor(deps.Metrics.Registry, promhttp.HandlerOpts{})
 }
 
 func withRequestLogging(logger *slog.Logger, next http.Handler) http.Handler {

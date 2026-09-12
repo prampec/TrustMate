@@ -16,6 +16,29 @@ func encodeCertPEM(der []byte) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
+// lookupProfile resolves name against deps.Profiles when set, falling
+// back to the compiled-in built-ins otherwise -- so Deps values built
+// without a Registry (older tests, primarily) keep working unchanged.
+func lookupProfile(deps Deps, name string) (profiles.Profile, bool) {
+	if deps.Profiles != nil {
+		return deps.Profiles.Lookup(name)
+	}
+	return profiles.Lookup(name)
+}
+
+// revocationReasons is the fixed set of RFC 5280 reason strings this API
+// accepts on POST /v1/certificates/{serial}/revoke -- kept small and
+// hardcoded rather than exposing the full CRLReason enum (e.g.
+// certificateHold/removeFromCRL don't make sense without a hold/unhold
+// workflow this phase doesn't build).
+var revocationReasons = map[string]bool{
+	"unspecified":          true,
+	"keyCompromise":        true,
+	"affiliationChanged":   true,
+	"superseded":           true,
+	"cessationOfOperation": true,
+}
+
 type issueCertificateRequest struct {
 	Profile string `json:"profile"`
 	CSR     string `json:"csr"`
@@ -37,9 +60,8 @@ type issueCertificateResponse struct {
 // certificate they want by naming a profile, not by smuggling policy
 // fields into the CSR.
 //
-// This route is unauthenticated in Phase 1 -- see docs/design.md's
-// Phase 3 roadmap entry for request-level auth. Anyone who can reach the
-// listener can issue a certificate.
+// Requires manager (or admin) role -- see internal/api/auth.go and
+// docs/design.md's Phase 3 roadmap entry.
 func handleIssueCertificate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req issueCertificateRequest
@@ -52,7 +74,7 @@ func handleIssueCertificate(deps Deps) http.HandlerFunc {
 			return
 		}
 
-		profile, ok := profiles.Lookup(req.Profile)
+		profile, ok := lookupProfile(deps, req.Profile)
 		if !ok {
 			writeError(w, http.StatusBadRequest, "unknown profile")
 			return
@@ -101,6 +123,9 @@ func handleIssueCertificate(deps Deps) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
+		if deps.Metrics != nil {
+			deps.Metrics.CertificatesIssuedTotal.WithLabelValues(profile.Name).Inc()
+		}
 
 		writeJSON(w, http.StatusCreated, issueCertificateResponse{
 			Serial:    rec.Serial,
@@ -113,14 +138,16 @@ func handleIssueCertificate(deps Deps) http.HandlerFunc {
 }
 
 type certificateResponse struct {
-	Serial       string    `json:"serial"`
-	Kind         string    `json:"kind"`
-	Profile      string    `json:"profile"`
-	Subject      string    `json:"subject"`
-	IssuerSerial string    `json:"issuer_serial"`
-	NotBefore    time.Time `json:"not_before"`
-	NotAfter     time.Time `json:"not_after"`
-	PEM          string    `json:"pem"`
+	Serial           string     `json:"serial"`
+	Kind             string     `json:"kind"`
+	Profile          string     `json:"profile"`
+	Subject          string     `json:"subject"`
+	IssuerSerial     string     `json:"issuer_serial"`
+	NotBefore        time.Time  `json:"not_before"`
+	NotAfter         time.Time  `json:"not_after"`
+	PEM              string     `json:"pem"`
+	RevokedAt        *time.Time `json:"revoked_at,omitempty"`
+	RevocationReason string     `json:"revocation_reason,omitempty"`
 }
 
 func handleGetCertificate(deps Deps) http.HandlerFunc {
@@ -136,14 +163,107 @@ func handleGetCertificate(deps Deps) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, http.StatusOK, certificateResponse{
-			Serial:       rec.Serial,
-			Kind:         string(rec.Kind),
-			Profile:      rec.ProfileName,
-			Subject:      rec.Subject,
-			IssuerSerial: rec.IssuerSerial,
-			NotBefore:    rec.NotBefore,
-			NotAfter:     rec.NotAfter,
-			PEM:          string(rec.PEM),
+			Serial:           rec.Serial,
+			Kind:             string(rec.Kind),
+			Profile:          rec.ProfileName,
+			Subject:          rec.Subject,
+			IssuerSerial:     rec.IssuerSerial,
+			NotBefore:        rec.NotBefore,
+			NotAfter:         rec.NotAfter,
+			PEM:              string(rec.PEM),
+			RevokedAt:        rec.RevokedAt,
+			RevocationReason: rec.RevocationReason,
+		})
+	}
+}
+
+type revokeCertificateRequest struct {
+	Reason string `json:"reason"`
+}
+
+type revokeCertificateResponse struct {
+	Serial    string    `json:"serial"`
+	RevokedAt time.Time `json:"revoked_at"`
+	Reason    string    `json:"reason"`
+}
+
+// handleRevokeCertificate marks a certificate revoked, immediately
+// invalidating the cached CRL so the next fetch reflects it (rather than
+// waiting out CRLBuilder's 24h cache) and making it show up as "revoked"
+// on the next OCSP query. Requires manager (or admin) role, same as
+// issuance -- see internal/api/auth.go.
+func handleRevokeCertificate(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		serial := r.PathValue("serial")
+
+		var req revokeCertificateRequest
+		if r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeError(w, http.StatusBadRequest, "malformed JSON body")
+				return
+			}
+		}
+		if req.Reason == "" {
+			req.Reason = "unspecified"
+		}
+		if !revocationReasons[req.Reason] {
+			writeError(w, http.StatusBadRequest, "unknown reason")
+			return
+		}
+
+		rec, err := deps.Store.Certificates().GetBySerial(r.Context(), serial)
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		if err != nil {
+			deps.Logger.Error("looking up certificate failed", "serial", serial, "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		// Root/intermediate CA certificates aren't revocable through this
+		// route -- they're structural anchors, not day-to-day certificate
+		// operations, and nothing in the CRL/OCSP/issuance path checks
+		// whether the issuing CA itself is "revoked".
+		if rec.Kind != store.CertKindLeaf {
+			writeError(w, http.StatusBadRequest, "only leaf certificates can be revoked")
+			return
+		}
+
+		now := time.Now()
+		err = deps.Store.Certificates().Revoke(r.Context(), serial, req.Reason, now)
+		if errors.Is(err, store.ErrAlreadyRevoked) {
+			writeError(w, http.StatusConflict, "already revoked")
+			return
+		}
+		if err != nil {
+			deps.Logger.Error("revoking certificate failed", "serial", serial, "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+
+		if err := deps.Store.Audit().Append(r.Context(), store.AuditEntry{
+			Timestamp: now.UTC(),
+			Actor:     r.RemoteAddr,
+			Action:    "revoke",
+			Target:    serial,
+			Detail:    req.Reason,
+		}); err != nil {
+			deps.Logger.Error("writing audit entry failed", "serial", serial, "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if deps.CRLBuilder != nil {
+			deps.CRLBuilder.Invalidate()
+		}
+		if deps.Metrics != nil {
+			deps.Metrics.CertificatesRevokedTotal.Inc()
+		}
+
+		writeJSON(w, http.StatusOK, revokeCertificateResponse{
+			Serial:    serial,
+			RevokedAt: now.UTC(),
+			Reason:    req.Reason,
 		})
 	}
 }

@@ -82,6 +82,17 @@ func Run(ctx context.Context, logger *slog.Logger, cfg config.Config, st store.S
 	}
 	logger.Info("bootstrap: admin access certificate generated", "serial", adminCert.SerialNumber.String())
 
+	// The bootstrap admin cert is "added with full access by default" per
+	// docs/design.md's functional goals -- it's the only credential that
+	// exists until this Admin issues more via POST /v1/clients.
+	if err := st.ClientRoles().Assign(ctx, store.ClientRoleRecord{
+		CertSerial: adminCert.SerialNumber.String(),
+		Role:       store.RoleAdmin,
+		CreatedAt:  time.Now().UTC(),
+	}); err != nil {
+		return Result{}, fmt.Errorf("bootstrap: assigning admin role: %w", err)
+	}
+
 	serverCert, err := generateServerTLSLeaf(ctx, cfg, st, ks, inter)
 	if err != nil {
 		return Result{}, err

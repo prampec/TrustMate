@@ -107,6 +107,62 @@ func TestOCSPResponderGoodAndUnknown(t *testing.T) {
 	}
 }
 
+func TestOCSPResponderRevoked(t *testing.T) {
+	issuer := testIssuer(t)
+
+	st, err := sqlite.Open(filepath.Join(t.TempDir(), "trustmate.db"))
+	if err != nil {
+		t.Fatalf("sqlite.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	if err := st.Certificates().Create(context.Background(), store.CertificateRecord{
+		Serial:    issuer.Cert.SerialNumber.String(),
+		Kind:      store.CertKindIntermediate,
+		Subject:   issuer.Cert.Subject.String(),
+		NotBefore: issuer.Cert.NotBefore,
+		NotAfter:  issuer.Cert.NotAfter,
+		PEM:       pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: issuer.Cert.Raw}),
+		CreatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Certificates().Create(intermediate): %v", err)
+	}
+
+	leaf := testLeaf(t, issuer, "revoked-leaf")
+	if err := st.Certificates().Create(context.Background(), store.CertificateRecord{
+		Serial:       leaf.SerialNumber.String(),
+		Kind:         store.CertKindLeaf,
+		Subject:      leaf.Subject.String(),
+		IssuerSerial: issuer.Cert.SerialNumber.String(),
+		NotBefore:    leaf.NotBefore,
+		NotAfter:     leaf.NotAfter,
+		PEM:          pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}),
+		CreatedAt:    time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("Certificates().Create: %v", err)
+	}
+	if err := st.Certificates().Revoke(context.Background(), leaf.SerialNumber.String(), "keyCompromise", time.Now()); err != nil {
+		t.Fatalf("Revoke: %v", err)
+	}
+
+	responder := NewOCSPResponder(issuer, st.Certificates())
+	reqDER, err := ocsp.CreateRequest(leaf, issuer.Cert, nil)
+	if err != nil {
+		t.Fatalf("ocsp.CreateRequest: %v", err)
+	}
+	respDER, err := responder.Respond(context.Background(), reqDER)
+	if err != nil {
+		t.Fatalf("Respond: %v", err)
+	}
+	resp, err := ocsp.ParseResponse(respDER, issuer.Cert)
+	if err != nil {
+		t.Fatalf("ocsp.ParseResponse: %v", err)
+	}
+	if resp.Status != ocsp.Revoked {
+		t.Errorf("status = %d, want Revoked (%d)", resp.Status, ocsp.Revoked)
+	}
+}
+
 func TestOCSPResponderRejectsMalformedRequest(t *testing.T) {
 	issuer := testIssuer(t)
 	st, err := sqlite.Open(filepath.Join(t.TempDir(), "trustmate.db"))
