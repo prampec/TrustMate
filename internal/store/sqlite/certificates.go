@@ -37,10 +37,16 @@ func (r certificateRepository) GetBySerial(ctx context.Context, serial string) (
 	return scanCertificate(row)
 }
 
+// FindByKind orders by created_at ASC, rowid ASC. The rowid tiebreak
+// matters because created_at is stored with only second-level precision
+// (see certificateColumns' created_at handling in scanCertificate) --
+// without it, two rows inserted in the same wall-clock second would sort
+// in an undefined order. certificates has a TEXT PRIMARY KEY (serial),
+// so SQLite still maintains an implicit monotonic rowid.
 func (r certificateRepository) FindByKind(ctx context.Context, kind store.CertKind) ([]store.CertificateRecord, error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT `+certificateColumns+`
-		FROM certificates WHERE kind = ? ORDER BY created_at ASC`, string(kind))
+		FROM certificates WHERE kind = ? ORDER BY created_at ASC, rowid ASC`, string(kind))
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: finding certificates by kind %s: %w", kind, err)
 	}
@@ -57,10 +63,16 @@ func (r certificateRepository) FindByKind(ctx context.Context, kind store.CertKi
 	return out, rows.Err()
 }
 
+// GetLatestByProfile orders by created_at DESC, rowid DESC. The rowid
+// tiebreak is required, not cosmetic: created_at has only second-level
+// precision, and once more than one row can exist for the same profile
+// (e.g. TSA identity rotation inserting a second profile_name="tsa" row),
+// two rows created within the same second would otherwise tie under
+// "ORDER BY created_at DESC LIMIT 1" with an undefined winner.
 func (r certificateRepository) GetLatestByProfile(ctx context.Context, profileName string) (store.CertificateRecord, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT `+certificateColumns+`
-		FROM certificates WHERE profile_name = ? ORDER BY created_at DESC LIMIT 1`, profileName)
+		FROM certificates WHERE profile_name = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`, profileName)
 	return scanCertificate(row)
 }
 

@@ -11,6 +11,7 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -174,6 +175,128 @@ func TestResponderMalformedRequest(t *testing.T) {
 	if !errors.Is(err, ErrMalformedRequest) {
 		t.Errorf("err = %v, want ErrMalformedRequest", err)
 	}
+}
+
+// testTSALeaf issues a TSA leaf certificate under interIssuer -- used by
+// the rotation test to mint a second TSA identity chaining to the same
+// intermediate the first one did, mirroring what a real rotation does
+// (only the TSA leaf changes, never the intermediate).
+func testTSALeaf(t *testing.T, interIssuer pki.Issuer, cn string) pki.Issuer {
+	t.Helper()
+	signer, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	cert, err := pki.IssueLeaf(profiles.TSA(), pkix.Name{CommonName: cn}, signer.Public(),
+		interIssuer, now, now.Add(time.Hour), nil)
+	if err != nil {
+		t.Fatalf("IssueLeaf: %v", err)
+	}
+	return pki.Issuer{Cert: cert, Signer: signer}
+}
+
+func TestResponderRotateSwapsSigningIdentity(t *testing.T) {
+	rootSigner, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	root, err := pki.SelfSignedCA(pki.CertRequest{
+		Subject: pkix.Name{CommonName: "Test Root"}, NotBefore: now, NotAfter: now.Add(24 * time.Hour),
+		IsCA: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}, rootSigner)
+	if err != nil {
+		t.Fatalf("SelfSignedCA: %v", err)
+	}
+	interSigner, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inter, err := pki.IssueCA(pki.CertRequest{
+		Subject: pkix.Name{CommonName: "Test Intermediate"}, PublicKey: interSigner.Public(),
+		NotBefore: now, NotAfter: now.Add(time.Hour), IsCA: true, PathLenZero: true,
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}, pki.Issuer{Cert: root, Signer: rootSigner})
+	if err != nil {
+		t.Fatalf("IssueCA: %v", err)
+	}
+	interIssuer := pki.Issuer{Cert: inter, Signer: interSigner}
+
+	tsaIssuer := testTSALeaf(t, interIssuer, "Test TSA 1")
+	r := NewResponder(tsaIssuer, inter)
+
+	if got := r.CurrentIssuer(); got.Cert.SerialNumber.Cmp(tsaIssuer.Cert.SerialNumber) != 0 {
+		t.Fatalf("CurrentIssuer before Rotate = serial %v, want %v", got.Cert.SerialNumber, tsaIssuer.Cert.SerialNumber)
+	}
+
+	reqDER := mustRequest(t, &timestamp.RequestOptions{Hash: crypto.SHA256, Certificates: true})
+	respBefore, err := r.Respond(context.Background(), reqDER)
+	if err != nil {
+		t.Fatalf("Respond (before rotate): %v", err)
+	}
+	tsBefore, err := timestamp.ParseResponse(respBefore)
+	if err != nil {
+		t.Fatalf("ParseResponse (before rotate): %v", err)
+	}
+	if !tsBefore.Certificates[0].Equal(tsaIssuer.Cert) {
+		t.Errorf("pre-rotation response embedded a different cert than expected")
+	}
+
+	newIssuer := testTSALeaf(t, interIssuer, "Test TSA 2")
+	r.Rotate(newIssuer)
+
+	if got := r.CurrentIssuer(); got.Cert.SerialNumber.Cmp(newIssuer.Cert.SerialNumber) != 0 {
+		t.Fatalf("CurrentIssuer after Rotate = serial %v, want %v", got.Cert.SerialNumber, newIssuer.Cert.SerialNumber)
+	}
+
+	respAfter, err := r.Respond(context.Background(), reqDER)
+	if err != nil {
+		t.Fatalf("Respond (after rotate): %v", err)
+	}
+	tsAfter, err := timestamp.ParseResponse(respAfter)
+	if err != nil {
+		t.Fatalf("ParseResponse (after rotate): %v", err)
+	}
+	if !tsAfter.Certificates[0].Equal(newIssuer.Cert) {
+		t.Errorf("post-rotation response did not embed the new TSA cert")
+	}
+	if tsAfter.Certificates[0].Equal(tsaIssuer.Cert) {
+		t.Errorf("post-rotation response still embedded the old TSA cert")
+	}
+}
+
+func TestResponderConcurrentRespondAndRotate(t *testing.T) {
+	tsaIssuer, inter := testChain(t)
+	r := NewResponder(tsaIssuer, inter)
+	reqDER := mustRequest(t, &timestamp.RequestOptions{Hash: crypto.SHA256})
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				if _, err := r.Respond(context.Background(), reqDER); err != nil {
+					t.Errorf("concurrent Respond: %v", err)
+					return
+				}
+			}
+		}
+	}()
+
+	for i := 0; i < 20; i++ {
+		newIssuer, _ := testChain(t)
+		r.Rotate(newIssuer)
+		_ = r.CurrentIssuer()
+	}
+	close(stop)
+	wg.Wait()
 }
 
 func TestResponderRejectsSHA1(t *testing.T) {

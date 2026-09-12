@@ -16,6 +16,7 @@ import (
 	"github.com/prampec/trustmate/internal/keystore"
 	"github.com/prampec/trustmate/internal/store"
 	"github.com/prampec/trustmate/internal/store/sqlite"
+	"github.com/prampec/trustmate/internal/tsa"
 )
 
 func discardLogger() *slog.Logger {
@@ -298,6 +299,70 @@ func TestRunGeneratesTSAIdentityWithCriticalTimeStampingEKU(t *testing.T) {
 	}
 	if issuer.Cert.SerialNumber.Cmp(cert.SerialNumber) != 0 {
 		t.Errorf("LoadTSAIssuer serial = %v, want %v", issuer.Cert.SerialNumber, cert.SerialNumber)
+	}
+}
+
+func TestLoadTSAIssuerPicksUpRotatedIdentity(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Defaults()
+	cfg.Bootstrap.OutputDir = filepath.Join(t.TempDir(), "bootstrap")
+	st := newTestStore(t)
+	ks := newTestKeyStore(t)
+
+	if _, err := Run(ctx, discardLogger(), cfg, st, ks); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	original, err := LoadTSAIssuer(ctx, st, ks)
+	if err != nil {
+		t.Fatalf("LoadTSAIssuer (original): %v", err)
+	}
+
+	interIssuer, err := LoadIntermediateIssuer(ctx, st, ks)
+	if err != nil {
+		t.Fatalf("LoadIntermediateIssuer: %v", err)
+	}
+
+	// Simulate POST /v1/tsa/rotate: mint a second TSA identity under a
+	// fresh ref (Generate refuses to overwrite refTSA), the same way
+	// internal/api's handler does via tsa.IssueIdentity.
+	rotated, _, err := tsa.IssueIdentity(ctx, "tsa-rotated", tsa.IdentityParams{
+		CommonName:        cfg.Bootstrap.TSACommonName,
+		Validity:          cfg.Bootstrap.TSAValidity,
+		PublicBaseURL:     cfg.Server.PublicBaseURL,
+		RevocationEnabled: cfg.Modules.Revocation,
+	}, st, ks, interIssuer)
+	if err != nil {
+		t.Fatalf("tsa.IssueIdentity: %v", err)
+	}
+
+	// This is the regression test for LoadTSAIssuer's key-lookup fix: it
+	// must load the key via the certificate record's own KeyRef
+	// ("tsa-rotated"), not the fixed refTSA constant ("tsa") -- otherwise
+	// it would return the new cert paired with the OLD key, which is
+	// wrong (and, in production, the two wouldn't even match).
+	reloaded, err := LoadTSAIssuer(ctx, st, ks)
+	if err != nil {
+		t.Fatalf("LoadTSAIssuer (after rotation): %v", err)
+	}
+	if reloaded.Cert.SerialNumber.Cmp(rotated.Cert.SerialNumber) != 0 {
+		t.Errorf("LoadTSAIssuer after rotation returned serial %v, want the rotated identity's serial %v",
+			reloaded.Cert.SerialNumber, rotated.Cert.SerialNumber)
+	}
+	if reloaded.Cert.SerialNumber.Cmp(original.Cert.SerialNumber) == 0 {
+		t.Error("LoadTSAIssuer after rotation returned the original (pre-rotation) identity")
+	}
+
+	gotDER, err := x509.MarshalPKIXPublicKey(reloaded.Signer.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDER, err := x509.MarshalPKIXPublicKey(rotated.Signer.Public())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotDER) != string(wantDER) {
+		t.Error("LoadTSAIssuer after rotation's signer public key does not match the rotated identity's key")
 	}
 }
 

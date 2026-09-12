@@ -24,6 +24,7 @@ import (
 	"github.com/prampec/trustmate/internal/pki"
 	"github.com/prampec/trustmate/internal/profiles"
 	"github.com/prampec/trustmate/internal/store"
+	"github.com/prampec/trustmate/internal/tsa"
 )
 
 const (
@@ -252,24 +253,22 @@ func generateServerTLSLeaf(ctx context.Context, cfg config.Config, st store.Stor
 	return pki.Issuer{Cert: cert, Signer: signer}, nil
 }
 
+// generateTSALeaf mints the first-ever TSA signing identity, under the
+// fixed refTSA ref, delegating the actual issuance to tsa.IssueIdentity
+// -- the same function POST /v1/tsa/rotate uses at runtime (with a fresh
+// ref instead of refTSA, since KeyStore.Generate refuses to overwrite),
+// so there's exactly one place that decides how a TSA identity is built.
 func generateTSALeaf(ctx context.Context, cfg config.Config, st store.Store, ks keystore.KeyStore, inter pki.Issuer) (pki.Issuer, error) {
-	signer, err := ks.Generate(ctx, refTSA, bootstrapAlgorithm)
-	if err != nil {
-		return pki.Issuer{}, fmt.Errorf("bootstrap: generating TSA key: %w", err)
-	}
-
-	profile := profiles.TSA().WithIssuerURLs(cfg.Server.PublicBaseURL, cfg.Modules.Revocation)
-	now := time.Now()
-	cert, err := pki.IssueLeaf(profile, pkix.Name{CommonName: cfg.Bootstrap.TSACommonName}, signer.Public(),
-		inter, now, now.Add(cfg.Bootstrap.TSAValidity), nil)
+	issuer, _, err := tsa.IssueIdentity(ctx, refTSA, tsa.IdentityParams{
+		CommonName:        cfg.Bootstrap.TSACommonName,
+		Validity:          cfg.Bootstrap.TSAValidity,
+		PublicBaseURL:     cfg.Server.PublicBaseURL,
+		RevocationEnabled: cfg.Modules.Revocation,
+	}, st, ks, inter)
 	if err != nil {
 		return pki.Issuer{}, fmt.Errorf("bootstrap: issuing TSA certificate: %w", err)
 	}
-
-	if err := createCertRecord(ctx, st, cert, store.CertKindLeaf, profile.Name, inter.Cert.SerialNumber.String(), string(refTSA)); err != nil {
-		return pki.Issuer{}, err
-	}
-	return pki.Issuer{Cert: cert, Signer: signer}, nil
+	return issuer, nil
 }
 
 func createCertRecord(ctx context.Context, st store.Store, cert *x509.Certificate, kind store.CertKind, profileName, issuerSerial, keyRef string) error {

@@ -1,11 +1,15 @@
 // Command trustmate-management is the operator CLI for TrustMate's
-// certificate-lifecycle REST endpoints: issue, look up, and revoke.
-// A thin wrapper over the REST API, sharing internal/cliclient with
-// cmd/trustmate-admin -- see docs/design.md's Phase 3 roadmap entry.
+// certificate-lifecycle REST endpoints: issue, look up, revoke, and (for
+// the TSA signing identity) rotate. A thin wrapper over the REST API,
+// sharing internal/cliclient with cmd/trustmate-admin -- see
+// docs/design.md's Phase 3 roadmap entry.
 //
-// Key rotation is explicitly out of scope for this phase: rotating live
-// CA/TSA key material safely (re-chaining existing leaves, keystore
-// migration) is deferred to a later phase.
+// Intermediate and root CA key rotation remain out of scope: rotating
+// those safely requires resolving CRL/OCSP per-certificate by issuer
+// generation, not just minting a new key -- a bigger architecture change
+// deferred to a later phase. TSA rotation has no such requirement (a TSA
+// cert only signs new timestamps; old ones stay verifiable via whatever
+// TSA cert they embedded, or by serial lookup), so it's supported here.
 package main
 
 import (
@@ -18,11 +22,19 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "certificates" {
+	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
 	}
-	runCertificates(os.Args[2:])
+	switch os.Args[1] {
+	case "certificates":
+		runCertificates(os.Args[2:])
+	case "tsa":
+		runTSA(os.Args[2:])
+	default:
+		usage()
+		os.Exit(2)
+	}
 }
 
 func usage() {
@@ -32,13 +44,20 @@ Usage:
   trustmate-management certificates issue   --profile=<name> --csr=<file> [flags]
   trustmate-management certificates get     [flags] <serial>
   trustmate-management certificates revoke  [--reason=<reason>] [flags] <serial>
+  trustmate-management tsa rotate           [flags]
 
-Flags must come before the positional <serial> argument (Go's flag
-package stops parsing at the first non-flag argument).
+Flags must come before any positional argument (Go's flag package stops
+parsing at the first non-flag argument).
+
+"tsa rotate" mints a new TSA signing identity and switches the running
+server to it for new timestamps immediately -- no restart needed, and the
+change is restart-safe (a later restart picks up the same identity). The
+previous TSA identity is left valid and unrevoked so timestamps already
+issued under it remain verifiable; requires the admin role.
 
 Flags (all connection flags default from TRUSTMATE_CLIENT_{SERVER,CERT,KEY,CA}):
   --server   TrustMate server base URL (default https://localhost:8080)
-  --cert     client certificate PEM (must hold the manager or admin role)
+  --cert     client certificate PEM (role required depends on the command)
   --key      client private key PEM
   --ca       CA bundle PEM to verify the server
 `)
@@ -102,6 +121,25 @@ func runCertificates(args []string) {
 		usage()
 		os.Exit(2)
 	}
+}
+
+func runTSA(args []string) {
+	if len(args) < 1 || args[0] != "rotate" {
+		usage()
+		os.Exit(2)
+	}
+	fs := flag.NewFlagSet("tsa rotate", flag.ExitOnError)
+	connFlags := cliclient.RegisterFlags(fs)
+	if err := fs.Parse(args[1:]); err != nil {
+		fatal(err)
+	}
+	client := mustClient(connFlags)
+
+	var out any
+	if err := client.Post("/v1/tsa/rotate", nil, &out); err != nil {
+		fatal(err)
+	}
+	printJSON(out)
 }
 
 func mustClient(f *cliclient.Flags) *cliclient.Client {

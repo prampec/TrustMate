@@ -2,7 +2,9 @@ package api
 
 import (
 	"log/slog"
+	"time"
 
+	"github.com/prampec/trustmate/internal/keystore"
 	"github.com/prampec/trustmate/internal/observability"
 	"github.com/prampec/trustmate/internal/pki"
 	"github.com/prampec/trustmate/internal/profiles"
@@ -19,11 +21,21 @@ type Deps struct {
 	Store  store.Store
 
 	// IntermediateIssuer signs every leaf certificate issued via
-	// POST /v1/certificates and POST /v1/clients.
+	// POST /v1/certificates, POST /v1/clients, and POST /v1/tsa/rotate.
 	IntermediateIssuer pki.Issuer
 	// PublicBaseURL is this deployment's externally reachable origin,
 	// templated into AIA/CDP/OCSP extensions on newly issued leaves.
 	PublicBaseURL string
+
+	// KeyStore generates the signing key for a newly rotated TSA identity
+	// (POST /v1/tsa/rotate). Nil in tests that don't exercise that route.
+	KeyStore keystore.KeyStore
+	// TSACommonName and TSAValidity are the identity template a rotated
+	// TSA certificate is issued against -- the same values the first-ever
+	// TSA identity used at bootstrap (cfg.Bootstrap.TSACommonName/
+	// TSAValidity), so rotation mints a like-for-like replacement.
+	TSACommonName string
+	TSAValidity   time.Duration
 
 	ModuleConfig ModuleConfig
 

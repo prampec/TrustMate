@@ -80,6 +80,15 @@ first such certificate is the bootstrap admin cert written to
 | `GET /v1/crl/intermediate.crl` | none | intermediate CA's CRL (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
 | `POST /v1/ocsp` | none | RFC 6960 OCSP responder (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
 | `POST /v1/tsa` | none | RFC 3161 Time-Stamp Authority (only when `TRUSTMATE_ENABLE_TSA=true`) |
+| `POST /v1/tsa/rotate` | admin | mint a new TSA signing identity and hot-swap to it immediately (only when `TRUSTMATE_ENABLE_TSA=true`) |
+
+Note: the built-in `tsa` profile sets neither `enable_crl` nor
+`enable_ocsp`, so a TSA certificate carries no CDP/AIA-OCSP extension —
+this predates rotation and isn't something it changes. Revoking a TSA
+identity you suspect is compromised (`POST
+/v1/certificates/{serial}/revoke`) updates the ledger and audit trail,
+but isn't independently discoverable by a relying party from the
+certificate itself; it's not a complete mitigation on its own.
 
 ## Operator CLIs
 
@@ -98,10 +107,19 @@ trustmate-admin audit list --limit=50
 trustmate-management certificates issue --profile=document-signing --csr=leaf.csr
 trustmate-management certificates get <serial>
 trustmate-management certificates revoke <serial> --reason=keyCompromise
+trustmate-management tsa rotate
 ```
 
-CA/TSA private-key rotation is intentionally not part of either CLI yet —
-see `docs/design.md`'s Phase 3 entry.
+`tsa rotate` mints a new TSA signing identity and switches the running
+server to it immediately — no restart needed, and the change is
+restart-safe (a later restart picks up the same identity). The previous
+identity is left valid and unrevoked so timestamps already issued under
+it remain verifiable.
+
+Intermediate and root CA key rotation remain out of scope: rotating those
+safely means resolving CRL/OCSP per-certificate by issuer generation, not
+just minting a new key — a bigger architecture change than TSA rotation
+needed, since a TSA cert only ever signs new timestamps.
 
 ## Layout
 

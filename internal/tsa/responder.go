@@ -42,14 +42,18 @@ var ErrUnsupportedRequest = errors.New("tsa: unsupported timestamp request")
 var PolicyOID = asn1.ObjectIdentifier{1, 3, 6, 1, 4, 1, 55698, 1, 1}
 
 // Responder answers RFC 3161 Time-Stamp requests, signing tokens with its
-// own bootstrap-issued identity (see internal/bootstrap's
-// generateTSALeaf/LoadTSAIssuer) -- never the intermediate CA directly,
-// unlike Phase 1's OCSP responder.
+// own signing identity (see internal/bootstrap's LoadTSAIssuer for
+// first-run, internal/tsa's IssueIdentity for both first-run and
+// rotation) -- never the intermediate CA directly, unlike Phase 1's OCSP
+// responder. intermediate is set once at construction and never mutated
+// (TSA-only rotation, see Rotate, never changes which intermediate CA is
+// current), so it's read without locking; issuer can change at runtime
+// via Rotate and is guarded by mu.
 type Responder struct {
-	issuer       pki.Issuer
 	intermediate *x509.Certificate
 
 	mu          sync.Mutex
+	issuer      pki.Issuer
 	lastGenTime time.Time
 }
 
@@ -58,6 +62,24 @@ type Responder struct {
 // certificate chain when a request asks for one.
 func NewResponder(issuer pki.Issuer, intermediate *x509.Certificate) *Responder {
 	return &Responder{issuer: issuer, intermediate: intermediate}
+}
+
+// Rotate swaps the signing identity used for every Respond call from
+// this point on. The previous identity's certificate and key are left
+// untouched -- timestamps already issued under it remain verifiable via
+// whatever TSA cert they embedded, or by fetching it by serial -- see
+// POST /v1/tsa/rotate's handler for the full rotation flow.
+func (r *Responder) Rotate(newIssuer pki.Issuer) {
+	r.mu.Lock()
+	r.issuer = newIssuer
+	r.mu.Unlock()
+}
+
+// CurrentIssuer returns the signing identity Respond currently uses.
+func (r *Responder) CurrentIssuer() pki.Issuer {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.issuer
 }
 
 // Respond parses a DER-encoded RFC 3161 TimeStampReq and returns a
@@ -71,10 +93,12 @@ func (r *Responder) Respond(ctx context.Context, rawRequest []byte) ([]byte, err
 		return nil, fmt.Errorf("%w: SHA-1 message imprints are not supported", ErrUnsupportedRequest)
 	}
 
+	issuer, genTime := r.snapshot()
+
 	ts := timestamp.Timestamp{
 		HashAlgorithm:     req.HashAlgorithm,
 		HashedMessage:     req.HashedMessage,
-		Time:              r.nextGenTime(),
+		Time:              genTime,
 		Policy:            PolicyOID,
 		Nonce:             req.Nonce,
 		AddTSACertificate: req.Certificates,
@@ -83,16 +107,19 @@ func (r *Responder) Respond(ctx context.Context, rawRequest []byte) ([]byte, err
 		ts.Certificates = []*x509.Certificate{r.intermediate}
 	}
 
-	resp, err := ts.CreateResponseWithOpts(r.issuer.Cert, r.issuer.Signer, crypto.SHA256)
+	resp, err := ts.CreateResponseWithOpts(issuer.Cert, issuer.Signer, crypto.SHA256)
 	if err != nil {
 		return nil, fmt.Errorf("tsa: creating response: %w", err)
 	}
 	return resp, nil
 }
 
-// nextGenTime returns the current time, bumped forward by at least one
-// second over the previous call's result if necessary, so successive
-// tokens have strictly increasing TSTInfo.genTime -- per docs/design.md's
+// snapshot returns the current signing issuer together with the next
+// strictly-increasing genTime, both computed under one lock/unlock pair
+// so a concurrent Rotate can never race with Respond reading a
+// half-updated issuer. genTime is bumped forward by at least one second
+// over the previous call's result if necessary, so successive tokens
+// have strictly increasing TSTInfo.genTime -- per docs/design.md's
 // security section ("enforce monotonic-ish timestamps to make ...
 // backdating detectable"). Truncated to the second because
 // github.com/digitorus/timestamp marshals TSTInfo.Time as ASN.1
@@ -101,7 +128,7 @@ func (r *Responder) Respond(ctx context.Context, rawRequest []byte) ([]byte, err
 // defeat the monotonicity guarantee on the wire. This guard is in-memory
 // and reset on restart, which is acceptable for v1's single-instance
 // scope (see docs/design.md's Phase 4/5 horizontal-scaling roadmap).
-func (r *Responder) nextGenTime() time.Time {
+func (r *Responder) snapshot() (pki.Issuer, time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -109,5 +136,5 @@ func (r *Responder) nextGenTime() time.Time {
 		now = r.lastGenTime.Add(time.Second)
 	}
 	r.lastGenTime = now
-	return now
+	return r.issuer, now
 }

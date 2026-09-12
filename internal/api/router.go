@@ -60,6 +60,7 @@ func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 	}
 	if deps.ModuleConfig.EnableTSA {
 		mux.HandleFunc("POST /v1/tsa", handleTSA(deps))
+		mux.HandleFunc("POST /v1/tsa/rotate", requireRole(deps, store.RoleAdmin, handleRotateTSA(deps)))
 		deps.Logger.Info("tsa module enabled")
 	}
 

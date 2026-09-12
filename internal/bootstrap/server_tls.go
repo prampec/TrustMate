@@ -121,6 +121,12 @@ func LoadIntermediateIssuer(ctx context.Context, st store.Store, ks keystore.Key
 // the TSA's own signing identity rather than the intermediate CA. Only
 // meaningful when the deployment bootstrapped with cfg.Modules.TSA true;
 // callers should not invoke this otherwise.
+//
+// Loads the signing key via rec.KeyRef, not the fixed refTSA constant:
+// POST /v1/tsa/rotate (see internal/tsa.IssueIdentity) mints later TSA
+// identities under a fresh ref each time, since KeyStore.Generate refuses
+// to overwrite an existing one, so the *latest* TSA certificate row may
+// not be the one under refTSA at all.
 func LoadTSAIssuer(ctx context.Context, st store.Store, ks keystore.KeyStore) (pki.Issuer, error) {
 	rec, err := st.Certificates().GetLatestByProfile(ctx, profiles.TSA().Name)
 	if err != nil {
@@ -136,7 +142,7 @@ func LoadTSAIssuer(ctx context.Context, st store.Store, ks keystore.KeyStore) (p
 		return pki.Issuer{}, fmt.Errorf("bootstrap: parsing TSA certificate: %w", err)
 	}
 
-	signer, err := ks.Get(ctx, refTSA)
+	signer, err := ks.Get(ctx, keystore.KeyRef(rec.KeyRef))
 	if err != nil {
 		return pki.Issuer{}, fmt.Errorf("bootstrap: loading TSA private key: %w", err)
 	}

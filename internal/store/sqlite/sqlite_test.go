@@ -118,6 +118,38 @@ func TestCertificateRepositoryCRUD(t *testing.T) {
 	}
 }
 
+func TestGetLatestByProfileBreaksTiesByInsertionOrder(t *testing.T) {
+	db := openTest(t)
+	ctx := context.Background()
+	repo := db.Certificates()
+
+	// Same created_at timestamp on both rows -- created_at only has
+	// second-level precision, so this is a realistic tie (e.g. two TSA
+	// identity rows from a rotation within the same wall-clock second),
+	// not a contrived one.
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := repo.Create(ctx, store.CertificateRecord{
+		Serial: "tsa-1", Kind: store.CertKindLeaf, ProfileName: "tsa", Subject: "CN=tsa-1",
+		NotBefore: now, NotAfter: now.Add(time.Hour), PEM: []byte("pem-1"), KeyRef: "tsa", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("Create(tsa-1): %v", err)
+	}
+	if err := repo.Create(ctx, store.CertificateRecord{
+		Serial: "tsa-2", Kind: store.CertKindLeaf, ProfileName: "tsa", Subject: "CN=tsa-2",
+		NotBefore: now, NotAfter: now.Add(time.Hour), PEM: []byte("pem-2"), KeyRef: "tsa-2", CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("Create(tsa-2): %v", err)
+	}
+
+	latest, err := repo.GetLatestByProfile(ctx, "tsa")
+	if err != nil {
+		t.Fatalf("GetLatestByProfile: %v", err)
+	}
+	if latest.Serial != "tsa-2" {
+		t.Errorf("GetLatestByProfile returned serial %q, want %q (the later-inserted row)", latest.Serial, "tsa-2")
+	}
+}
+
 func TestProfileRepositoryVersioning(t *testing.T) {
 	db := openTest(t)
 	ctx := context.Background()

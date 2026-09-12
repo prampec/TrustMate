@@ -82,6 +82,9 @@ func newTestDeps(t *testing.T, mods ModuleConfig) Deps {
 		Store:              st,
 		IntermediateIssuer: issuer,
 		PublicBaseURL:      cfg.Server.PublicBaseURL,
+		KeyStore:           ks,
+		TSACommonName:      cfg.Bootstrap.TSACommonName,
+		TSAValidity:        cfg.Bootstrap.TSAValidity,
 		ModuleConfig:       mods,
 		Profiles:           registry,
 		Metrics:            observability.NewMetrics(),
@@ -95,11 +98,33 @@ func newTestDeps(t *testing.T, mods ModuleConfig) Deps {
 // newTestDeps' bootstrap.Run call already assigned the admin role to --
 // see internal/bootstrap/bootstrap.go. Tests attach it to a request via
 // withClientCert to exercise routes gated by requireRole.
+//
+// Looks it up via client_roles (role == admin), not "the latest
+// certificate issued against the default/client-auth profile": role is
+// deliberately independent of profile (a dedicated role-assignment
+// table, not derived from profile name -- see docs/design.md's Phase 3
+// entry), and issueClientCert below issues manager-role test certs
+// against that same default profile too, so "latest default-profile
+// cert" is not reliably the admin one once a test has issued others.
 func adminCert(t *testing.T, deps Deps) *x509.Certificate {
 	t.Helper()
-	rec, err := deps.Store.Certificates().GetLatestByProfile(context.Background(), profiles.Default().Name)
+	roles, err := deps.Store.ClientRoles().List(context.Background())
 	if err != nil {
-		t.Fatalf("GetLatestByProfile(default): %v", err)
+		t.Fatalf("ClientRoles().List: %v", err)
+	}
+	var adminSerial string
+	for _, r := range roles {
+		if r.Role == store.RoleAdmin {
+			adminSerial = r.CertSerial
+			break
+		}
+	}
+	if adminSerial == "" {
+		t.Fatal("adminCert: no certificate with the admin role found")
+	}
+	rec, err := deps.Store.Certificates().GetBySerial(context.Background(), adminSerial)
+	if err != nil {
+		t.Fatalf("GetBySerial(admin serial): %v", err)
 	}
 	block, _ := pem.Decode(rec.PEM)
 	if block == nil {
