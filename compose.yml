@@ -1,0 +1,29 @@
+version: "3.9"
+
+services:
+  trustmated:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: trustmate/trustmated:local
+    ports:
+      - "8182:8182"
+    userns_mode: "keep-id:uid=65532,gid=65532"
+    environment:
+      TRUSTMATE_LISTEN_ADDR: ":8182"
+      TRUSTMATE_TLS_SANS: "test.me"
+      TRUSTMATE_PUBLIC_BASE_URL: "https://test.me:8182"
+      TRUSTMATE_LOG_LEVEL: "INFO"
+      TRUSTMATE_ENABLE_REVOCATION: "true"
+      TRUSTMATE_ENABLE_TSA: "true"
+      TRUSTMATE_STORE_DSN: "/data/trustmate.db"
+      TRUSTMATE_KEYSTORE_DIR: "/data/keys"
+      TRUSTMATE_BOOTSTRAP_OUTPUT_DIR: "/data/bootstrap"
+      TRUSTMATE_KEK: "${TRUSTMATE_KEK:?set TRUSTMATE_KEK in the environment or a .env file}"
+    volumes:
+      - trustmate-data:/data
+      - ./bootstrap:/data/bootstrap:Z
+    restart: unless-stopped
+
+volumes:
+  trustmate-data:
