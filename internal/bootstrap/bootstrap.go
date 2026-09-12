@@ -29,6 +29,7 @@ import (
 const (
 	refRoot      keystore.KeyRef = "root"
 	refServerTLS keystore.KeyRef = "server-tls"
+	refTSA       keystore.KeyRef = "tsa"
 
 	// IntermediateKeyRef is the keystore ref for the intermediate CA's
 	// signing key, exported so callers outside this package (e.g.
@@ -87,18 +88,31 @@ func Run(ctx context.Context, logger *slog.Logger, cfg config.Config, st store.S
 	}
 	logger.Info("bootstrap: server TLS certificate generated", "serial", serverCert.Cert.SerialNumber.String())
 
-	if err := writeBootstrapOutput(cfg.Bootstrap.OutputDir, root.Cert, inter.Cert, adminCert, adminKey); err != nil {
+	entries := []store.AuditEntry{
+		{Timestamp: time.Now().UTC(), Actor: "bootstrap", Action: "issue", Target: root.Cert.SerialNumber.String(), Detail: "root CA"},
+		{Timestamp: time.Now().UTC(), Actor: "bootstrap", Action: "issue", Target: inter.Cert.SerialNumber.String(), Detail: "intermediate CA"},
+		{Timestamp: time.Now().UTC(), Actor: "bootstrap", Action: "issue", Target: adminCert.SerialNumber.String(), Detail: "admin access certificate"},
+		{Timestamp: time.Now().UTC(), Actor: "bootstrap", Action: "issue", Target: serverCert.Cert.SerialNumber.String(), Detail: "server TLS certificate"},
+	}
+
+	var tsaCert *x509.Certificate
+	if cfg.Modules.TSA {
+		tsaIssuer, err := generateTSALeaf(ctx, cfg, st, ks, inter)
+		if err != nil {
+			return Result{}, err
+		}
+		logger.Info("bootstrap: TSA signing certificate generated", "serial", tsaIssuer.Cert.SerialNumber.String())
+		tsaCert = tsaIssuer.Cert
+		entries = append(entries, store.AuditEntry{Timestamp: time.Now().UTC(), Actor: "bootstrap", Action: "issue", Target: tsaCert.SerialNumber.String(), Detail: "TSA signing certificate"})
+	}
+
+	if err := writeBootstrapOutput(cfg.Bootstrap.OutputDir, root.Cert, inter.Cert, adminCert, adminKey, tsaCert); err != nil {
 		return Result{}, err
 	}
 	logger.Warn("bootstrap: admin-key.pem written to bootstrap output dir is an unencrypted one-time export -- retrieve it and move it off this host",
 		"dir", cfg.Bootstrap.OutputDir)
 
-	for _, e := range []store.AuditEntry{
-		{Timestamp: time.Now().UTC(), Actor: "bootstrap", Action: "issue", Target: root.Cert.SerialNumber.String(), Detail: "root CA"},
-		{Timestamp: time.Now().UTC(), Actor: "bootstrap", Action: "issue", Target: inter.Cert.SerialNumber.String(), Detail: "intermediate CA"},
-		{Timestamp: time.Now().UTC(), Actor: "bootstrap", Action: "issue", Target: adminCert.SerialNumber.String(), Detail: "admin access certificate"},
-		{Timestamp: time.Now().UTC(), Actor: "bootstrap", Action: "issue", Target: serverCert.Cert.SerialNumber.String(), Detail: "server TLS certificate"},
-	} {
+	for _, e := range entries {
 		if err := st.Audit().Append(ctx, e); err != nil {
 			return Result{}, fmt.Errorf("bootstrap: writing audit entry: %w", err)
 		}
@@ -108,7 +122,7 @@ func Run(ctx context.Context, logger *slog.Logger, cfg config.Config, st store.S
 }
 
 func persistDefaultProfiles(ctx context.Context, st store.Store) error {
-	for _, p := range []profiles.Profile{profiles.Default(), profiles.ServerTLS()} {
+	for _, p := range []profiles.Profile{profiles.Default(), profiles.ServerTLS(), profiles.TSA()} {
 		data, err := json.Marshal(p)
 		if err != nil {
 			return fmt.Errorf("bootstrap: encoding profile %s: %w", p.Name, err)
@@ -227,6 +241,26 @@ func generateServerTLSLeaf(ctx context.Context, cfg config.Config, st store.Stor
 	return pki.Issuer{Cert: cert, Signer: signer}, nil
 }
 
+func generateTSALeaf(ctx context.Context, cfg config.Config, st store.Store, ks keystore.KeyStore, inter pki.Issuer) (pki.Issuer, error) {
+	signer, err := ks.Generate(ctx, refTSA, bootstrapAlgorithm)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: generating TSA key: %w", err)
+	}
+
+	profile := profiles.TSA().WithIssuerURLs(cfg.Server.PublicBaseURL, cfg.Modules.Revocation)
+	now := time.Now()
+	cert, err := pki.IssueLeaf(profile, pkix.Name{CommonName: cfg.Bootstrap.TSACommonName}, signer.Public(),
+		inter, now, now.Add(cfg.Bootstrap.TSAValidity), nil)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: issuing TSA certificate: %w", err)
+	}
+
+	if err := createCertRecord(ctx, st, cert, store.CertKindLeaf, profile.Name, inter.Cert.SerialNumber.String(), string(refTSA)); err != nil {
+		return pki.Issuer{}, err
+	}
+	return pki.Issuer{Cert: cert, Signer: signer}, nil
+}
+
 func createCertRecord(ctx context.Context, st store.Store, cert *x509.Certificate, kind store.CertKind, profileName, issuerSerial, keyRef string) error {
 	return st.Certificates().Create(ctx, store.CertificateRecord{
 		Serial:       cert.SerialNumber.String(),
@@ -246,7 +280,7 @@ func encodePEM(der []byte) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
-func writeBootstrapOutput(dir string, root, inter, admin *x509.Certificate, adminKey *ecdsa.PrivateKey) error {
+func writeBootstrapOutput(dir string, root, inter, admin *x509.Certificate, adminKey *ecdsa.PrivateKey, tsa *x509.Certificate) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("bootstrap: creating output dir %s: %w", dir, err)
 	}
@@ -262,6 +296,9 @@ func writeBootstrapOutput(dir string, root, inter, admin *x509.Certificate, admi
 		"chain.pem":        append(encodePEM(inter.Raw), encodePEM(root.Raw)...),
 		"admin.pem":        encodePEM(admin.Raw),
 		"admin-key.pem":    pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
+	}
+	if tsa != nil {
+		files["tsa.pem"] = encodePEM(tsa.Raw)
 	}
 	for name, data := range files {
 		perm := os.FileMode(0o644)

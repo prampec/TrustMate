@@ -12,12 +12,13 @@ import (
 	"github.com/prampec/trustmate/internal/keystore"
 	"github.com/prampec/trustmate/internal/revocation"
 	"github.com/prampec/trustmate/internal/store/sqlite"
+	"github.com/prampec/trustmate/internal/tsa"
 )
 
 // newTestDeps bootstraps a full CA (root/intermediate/admin/server-tls)
 // against a temp SQLite store and file keystore, then builds a Deps with
-// a real IntermediateIssuer/CRLBuilder/OCSPResponder -- the same
-// fixtures bootstrap_test.go uses, since only real, chain-verifiable
+// a real IntermediateIssuer/CRLBuilder/OCSPResponder/TSAResponder -- the
+// same fixtures bootstrap_test.go uses, since only real, chain-verifiable
 // material exercises these handlers meaningfully.
 func newTestDeps(t *testing.T, mods ModuleConfig) Deps {
 	t.Helper()
@@ -48,6 +49,15 @@ func newTestDeps(t *testing.T, mods ModuleConfig) Deps {
 		t.Fatalf("LoadIntermediateIssuer: %v", err)
 	}
 
+	var tsaResponder *tsa.Responder
+	if mods.EnableTSA {
+		tsaIssuer, err := bootstrap.LoadTSAIssuer(context.Background(), st, ks)
+		if err != nil {
+			t.Fatalf("LoadTSAIssuer: %v", err)
+		}
+		tsaResponder = tsa.NewResponder(tsaIssuer, issuer.Cert)
+	}
+
 	return Deps{
 		Logger:             logger,
 		Store:              st,
@@ -56,5 +66,6 @@ func newTestDeps(t *testing.T, mods ModuleConfig) Deps {
 		ModuleConfig:       mods,
 		CRLBuilder:         revocation.NewCRLBuilder(issuer),
 		OCSPResponder:      revocation.NewOCSPResponder(issuer, st.Certificates()),
+		TSAResponder:       tsaResponder,
 	}
 }

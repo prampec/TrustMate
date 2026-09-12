@@ -19,6 +19,7 @@ import (
 	"github.com/prampec/trustmate/internal/observability"
 	"github.com/prampec/trustmate/internal/revocation"
 	"github.com/prampec/trustmate/internal/store/sqlite"
+	"github.com/prampec/trustmate/internal/tsa"
 )
 
 func main() {
@@ -76,6 +77,18 @@ func main() {
 		EnableRevocation: cfg.Modules.Revocation,
 		EnableTSA:        cfg.Modules.TSA,
 	}
+
+	var tsaResponder *tsa.Responder
+	if mods.EnableTSA {
+		tsaCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		tsaIssuer, err := bootstrap.LoadTSAIssuer(tsaCtx, db, ks)
+		cancel()
+		if err != nil {
+			logger.Error("loading TSA issuer failed", "err", err)
+			os.Exit(1)
+		}
+		tsaResponder = tsa.NewResponder(tsaIssuer, interIssuer.Cert)
+	}
 	ready := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -95,6 +108,7 @@ func main() {
 		ModuleConfig:       mods,
 		CRLBuilder:         revocation.NewCRLBuilder(interIssuer),
 		OCSPResponder:      revocation.NewOCSPResponder(interIssuer, db.Certificates()),
+		TSAResponder:       tsaResponder,
 	}, ready)
 
 	server := &http.Server{

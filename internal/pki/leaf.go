@@ -17,15 +17,16 @@ import (
 // enables them.
 func IssueLeaf(profile profiles.Profile, subject pkix.Name, pub crypto.PublicKey, issuer Issuer, notBefore, notAfter time.Time, dnsNames []string) (*x509.Certificate, error) {
 	req := CertRequest{
-		Subject:      subject,
-		PublicKey:    pub,
-		NotBefore:    notBefore,
-		NotAfter:     notAfter,
-		IsCA:         false,
-		KeyUsage:     profile.KeyUsage,
-		ExtKeyUsage:  profile.ExtKeyUsage,
-		DNSNames:     dnsNames,
-		AIAIssuerURL: profile.AIATemplate,
+		Subject:             subject,
+		PublicKey:           pub,
+		NotBefore:           notBefore,
+		NotAfter:            notAfter,
+		IsCA:                false,
+		KeyUsage:            profile.KeyUsage,
+		ExtKeyUsage:         profile.ExtKeyUsage,
+		CriticalExtKeyUsage: profile.CriticalEKU,
+		DNSNames:            dnsNames,
+		AIAIssuerURL:        profile.AIATemplate,
 	}
 	if profile.EnableCRL {
 		req.CRLURL = profile.CDPTemplate

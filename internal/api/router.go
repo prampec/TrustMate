@@ -45,7 +45,7 @@ func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 		deps.Logger.Info("revocation module enabled")
 	}
 	if deps.ModuleConfig.EnableTSA {
-		// TODO(phase 2): register /v1/tsa
+		mux.HandleFunc("POST /v1/tsa", handleTSA(deps))
 		deps.Logger.Info("tsa module enabled")
 	}
 

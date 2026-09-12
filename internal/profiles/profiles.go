@@ -21,7 +21,11 @@ type Profile struct {
 	KeyAlgorithm keystore.Algorithm
 	KeyUsage     x509.KeyUsage
 	ExtKeyUsage  []x509.ExtKeyUsage
-	Validity     time.Duration
+	// CriticalEKU marks the Extended Key Usage extension critical (RFC
+	// 3161 section 2.3 requires this for a TSA signing certificate; no
+	// other built-in profile needs it).
+	CriticalEKU bool
+	Validity    time.Duration
 
 	EnableOCSP bool
 	EnableCRL  bool
@@ -77,9 +81,25 @@ func DocumentSigning() Profile {
 	}
 }
 
+// TSA is the profile used for the bootstrap-issued RFC 3161 Time-Stamp
+// Authority signing identity -- its own certificate, distinct from the
+// intermediate CA (see docs/design.md's tsa module entry). Per RFC 3161
+// section 2.3 the Extended Key Usage extension must be critical and
+// contain only id-kp-timeStamping.
+func TSA() Profile {
+	return Profile{
+		Name:         "tsa",
+		Version:      1,
+		KeyAlgorithm: keystore.AlgorithmECDSAP256,
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+		CriticalEKU:  true,
+	}
+}
+
 // All returns every built-in profile.
 func All() []Profile {
-	return []Profile{Default(), ServerTLS(), DocumentSigning()}
+	return []Profile{Default(), ServerTLS(), DocumentSigning(), TSA()}
 }
 
 // Lookup finds a built-in profile by name.

@@ -92,6 +92,35 @@ func LoadIntermediateIssuer(ctx context.Context, st store.Store, ks keystore.Key
 	return pki.Issuer{Cert: cert, Signer: signer}, nil
 }
 
+// LoadTSAIssuer reconstructs the TSA's own pki.Issuer (cert + signer)
+// from the store and keystore at runtime -- same "reconstruct
+// bootstrap-generated material" role as LoadIntermediateIssuer, but for
+// the TSA's own signing identity rather than the intermediate CA. Only
+// meaningful when the deployment bootstrapped with cfg.Modules.TSA true;
+// callers should not invoke this otherwise.
+func LoadTSAIssuer(ctx context.Context, st store.Store, ks keystore.KeyStore) (pki.Issuer, error) {
+	rec, err := st.Certificates().GetLatestByProfile(ctx, profiles.TSA().Name)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: loading TSA certificate: %w", err)
+	}
+
+	der, err := derFromPEM(rec.PEM)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: decoding TSA PEM: %w", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: parsing TSA certificate: %w", err)
+	}
+
+	signer, err := ks.Get(ctx, refTSA)
+	if err != nil {
+		return pki.Issuer{}, fmt.Errorf("bootstrap: loading TSA private key: %w", err)
+	}
+
+	return pki.Issuer{Cert: cert, Signer: signer}, nil
+}
+
 func derFromPEM(data []byte) ([]byte, error) {
 	block, _ := pem.Decode(data)
 	if block == nil {

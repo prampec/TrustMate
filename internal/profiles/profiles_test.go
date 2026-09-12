@@ -62,8 +62,21 @@ func TestAllHasDistinctNames(t *testing.T) {
 		}
 		seen[p.Name] = true
 	}
-	if len(all) != 3 {
-		t.Errorf("len(All()) = %d, want 3", len(all))
+	if len(all) != 4 {
+		t.Errorf("len(All()) = %d, want 4", len(all))
+	}
+}
+
+func TestTSAProfileIsCriticalTimeStampingOnly(t *testing.T) {
+	p := TSA()
+	if p.Name == "" {
+		t.Error("TSA().Name is empty")
+	}
+	if !p.CriticalEKU {
+		t.Error("TSA().CriticalEKU = false, want true (RFC 3161 section 2.3)")
+	}
+	if len(p.ExtKeyUsage) != 1 || p.ExtKeyUsage[0] != x509.ExtKeyUsageTimeStamping {
+		t.Errorf("TSA().ExtKeyUsage = %v, want exactly {ExtKeyUsageTimeStamping}", p.ExtKeyUsage)
 	}
 }
 

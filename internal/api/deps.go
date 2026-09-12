@@ -6,6 +6,7 @@ import (
 	"github.com/prampec/trustmate/internal/pki"
 	"github.com/prampec/trustmate/internal/revocation"
 	"github.com/prampec/trustmate/internal/store"
+	"github.com/prampec/trustmate/internal/tsa"
 )
 
 // Deps carries every dependency the REST handlers need. Grouping them
@@ -26,4 +27,5 @@ type Deps struct {
 
 	CRLBuilder    *revocation.CRLBuilder
 	OCSPResponder *revocation.OCSPResponder
+	TSAResponder  *tsa.Responder
 }

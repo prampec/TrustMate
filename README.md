@@ -57,7 +57,7 @@ set via `TRUSTMATE_CONFIG_FILE`):
 Health/ops endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics` (all
 served over HTTPS, like everything else).
 
-CA/revocation endpoints (Phase 1; `POST /v1/certificates` has no
+CA/revocation/TSA endpoints (Phase 1-2; `POST /v1/certificates` has no
 request-level auth yet — see `docs/design.md`'s Phase 3 entry):
 
 | Endpoint | Purpose |
@@ -68,6 +68,7 @@ request-level auth yet — see `docs/design.md`'s Phase 3 entry):
 | `GET /v1/certificates/{serial}` | look up an issued certificate by serial |
 | `GET /v1/crl/intermediate.crl` | intermediate CA's CRL (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
 | `POST /v1/ocsp` | RFC 6960 OCSP responder (only when `TRUSTMATE_ENABLE_REVOCATION=true`) |
+| `POST /v1/tsa` | RFC 3161 Time-Stamp Authority (only when `TRUSTMATE_ENABLE_TSA=true`) |
 
 ## Layout
 
@@ -75,11 +76,11 @@ request-level auth yet — see `docs/design.md`'s Phase 3 entry):
 cmd/trustmated/       service entrypoint
 cmd/trustmate-admin/  operator CLI (not implemented yet — phase 3)
 internal/api/         REST surface + health/metrics/logging
-internal/bootstrap/   first-run CA/admin/server-tls cert generation
+internal/bootstrap/   first-run CA/admin/server-tls/tsa cert generation
 internal/config/      configuration loading (YAML file + env overrides)
 internal/pki/         CA core: certificate issuance
 internal/revocation/  CRL + OCSP responder
-internal/tsa/         RFC 3161 Time-Stamp Authority (not implemented yet — phase 2)
+internal/tsa/         RFC 3161 Time-Stamp Authority, own bootstrap-issued signing identity
 internal/profiles/    certificate profile definitions (config/code)
 internal/keystore/    encrypted file-backed private key storage
 internal/store/       issued-cert ledger, profiles, audit log (SQLite)

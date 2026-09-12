@@ -3,12 +3,14 @@ module github.com/prampec/trustmate
 go 1.26.4
 
 require (
+	github.com/digitorus/timestamp v0.0.0-20250524132541-c45532741eea
 	golang.org/x/crypto v0.57.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.58.0
 )
 
 require (
+	github.com/digitorus/pkcs7 v0.0.0-20230713084857-e76b763bdc49 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect

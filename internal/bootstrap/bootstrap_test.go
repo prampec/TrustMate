@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
 	"io"
 	"log/slog"
@@ -53,7 +54,7 @@ func parseCertPEM(t *testing.T, data []byte) *x509.Certificate {
 	return cert
 }
 
-func TestRunGeneratesFourCertificatesAndBootstrapOutput(t *testing.T) {
+func TestRunGeneratesFiveCertificatesAndBootstrapOutput(t *testing.T) {
 	ctx := context.Background()
 	cfg := config.Defaults()
 	cfg.Bootstrap.OutputDir = filepath.Join(t.TempDir(), "bootstrap")
@@ -77,11 +78,11 @@ func TestRunGeneratesFourCertificatesAndBootstrapOutput(t *testing.T) {
 		t.Fatalf("FindByKind(intermediate) = %v, %v; want 1 row", inters, err)
 	}
 	leaves, err := st.Certificates().FindByKind(ctx, store.CertKindLeaf)
-	if err != nil || len(leaves) != 2 {
-		t.Fatalf("FindByKind(leaf) = %v, %v; want 2 rows (admin + server-tls)", leaves, err)
+	if err != nil || len(leaves) != 3 {
+		t.Fatalf("FindByKind(leaf) = %v, %v; want 3 rows (admin + server-tls + tsa)", leaves, err)
 	}
 
-	for _, name := range []string{"root.pem", "intermediate.pem", "chain.pem", "admin.pem", "admin-key.pem"} {
+	for _, name := range []string{"root.pem", "intermediate.pem", "chain.pem", "admin.pem", "admin-key.pem", "tsa.pem"} {
 		path := filepath.Join(cfg.Bootstrap.OutputDir, name)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected bootstrap output file %s: %v", path, err)
@@ -142,8 +143,8 @@ func TestRunIsIdempotentAndNeverCallsGenerateOnRestart(t *testing.T) {
 	}
 
 	leaves, err := st.Certificates().FindByKind(ctx, store.CertKindLeaf)
-	if err != nil || len(leaves) != 2 {
-		t.Fatalf("FindByKind(leaf) after second Run = %v, %v; want still 2 rows", leaves, err)
+	if err != nil || len(leaves) != 3 {
+		t.Fatalf("FindByKind(leaf) after second Run = %v, %v; want still 3 rows", leaves, err)
 	}
 }
 
@@ -175,8 +176,8 @@ func TestRunUsesAbsolutePublicBaseURLInExtensions(t *testing.T) {
 	}
 
 	leaves, err := st.Certificates().FindByKind(ctx, store.CertKindLeaf)
-	if err != nil || len(leaves) != 2 {
-		t.Fatalf("FindByKind(leaf) = %v, %v; want 2 rows", leaves, err)
+	if err != nil || len(leaves) != 3 {
+		t.Fatalf("FindByKind(leaf) = %v, %v; want 3 rows", leaves, err)
 	}
 	for _, rec := range leaves {
 		cert := parseCertPEM(t, rec.PEM)
@@ -223,6 +224,87 @@ func TestLoadIntermediateIssuerMatchesStoredCertAndKey(t *testing.T) {
 		t.Error("issuer.Signer's public key does not match the stored intermediate certificate's public key")
 	}
 }
+
+func TestRunGeneratesTSAIdentityWithCriticalTimeStampingEKU(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Defaults()
+	cfg.Bootstrap.OutputDir = filepath.Join(t.TempDir(), "bootstrap")
+	st := newTestStore(t)
+	ks := newTestKeyStore(t)
+
+	if _, err := Run(ctx, discardLogger(), cfg, st, ks); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	rec, err := st.Certificates().GetLatestByProfile(ctx, "tsa")
+	if err != nil {
+		t.Fatalf("GetLatestByProfile(tsa): %v", err)
+	}
+	if rec.KeyRef != "tsa" {
+		t.Errorf("KeyRef = %q, want %q", rec.KeyRef, "tsa")
+	}
+	cert := parseCertPEM(t, rec.PEM)
+
+	inters, err := st.Certificates().FindByKind(ctx, store.CertKindIntermediate)
+	if err != nil || len(inters) != 1 {
+		t.Fatalf("FindByKind(intermediate) = %v, %v; want 1 row", inters, err)
+	}
+	interCert := parseCertPEM(t, inters[0].PEM)
+	if err := cert.CheckSignatureFrom(interCert); err != nil {
+		t.Errorf("TSA cert does not chain to intermediate: %v", err)
+	}
+
+	if len(cert.ExtKeyUsage) != 1 || cert.ExtKeyUsage[0] != x509.ExtKeyUsageTimeStamping {
+		t.Errorf("ExtKeyUsage = %v, want exactly {ExtKeyUsageTimeStamping}", cert.ExtKeyUsage)
+	}
+	var criticalFound bool
+	for _, ext := range cert.Extensions {
+		if ext.Id.Equal(asn1ExtKeyUsageOID) {
+			criticalFound = ext.Critical
+		}
+	}
+	if !criticalFound {
+		t.Error("EKU extension missing or not marked critical")
+	}
+
+	issuer, err := LoadTSAIssuer(ctx, st, ks)
+	if err != nil {
+		t.Fatalf("LoadTSAIssuer: %v", err)
+	}
+	if issuer.Cert.SerialNumber.Cmp(cert.SerialNumber) != 0 {
+		t.Errorf("LoadTSAIssuer serial = %v, want %v", issuer.Cert.SerialNumber, cert.SerialNumber)
+	}
+}
+
+func TestRunSkipsTSAIdentityWhenModuleDisabled(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Defaults()
+	cfg.Bootstrap.OutputDir = filepath.Join(t.TempDir(), "bootstrap")
+	cfg.Modules.TSA = false
+	st := newTestStore(t)
+	ks := newTestKeyStore(t)
+
+	if _, err := Run(ctx, discardLogger(), cfg, st, ks); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	leaves, err := st.Certificates().FindByKind(ctx, store.CertKindLeaf)
+	if err != nil || len(leaves) != 2 {
+		t.Fatalf("FindByKind(leaf) = %v, %v; want 2 rows (admin + server-tls, no tsa)", leaves, err)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Bootstrap.OutputDir, "tsa.pem")); err == nil {
+		t.Error("tsa.pem was written to bootstrap output dir, want it absent when the TSA module is disabled")
+	}
+
+	if _, err := LoadTSAIssuer(ctx, st, ks); err == nil {
+		t.Error("LoadTSAIssuer succeeded with no TSA identity ever generated, want an error")
+	}
+}
+
+// asn1ExtKeyUsageOID is the Extended Key Usage extension's OID (RFC 5280
+// section 4.2.1.12), duplicated here rather than exported from pki to
+// keep this assertion black-box.
+var asn1ExtKeyUsageOID = asn1.ObjectIdentifier{2, 5, 29, 37}
 
 // panicOnGenerate wraps a KeyStore and panics if Generate is ever
 // called, proving the idempotency short-circuit never touches the

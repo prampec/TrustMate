@@ -56,10 +56,12 @@ type BootstrapConfig struct {
 	IntermediateCommonName string        `yaml:"intermediate_cn"`
 	AdminCommonName        string        `yaml:"admin_cn"`
 	ServerCommonName       string        `yaml:"server_cn"`
+	TSACommonName          string        `yaml:"tsa_cn"`
 	RootValidity           time.Duration `yaml:"root_validity"`
 	IntermediateValidity   time.Duration `yaml:"intermediate_validity"`
 	AdminValidity          time.Duration `yaml:"admin_validity"`
 	ServerValidity         time.Duration `yaml:"server_validity"`
+	TSAValidity            time.Duration `yaml:"tsa_validity"`
 }
 
 type ProfilesConfig struct {
@@ -97,10 +99,12 @@ func Defaults() Config {
 			IntermediateCommonName: "TrustMate Intermediate CA",
 			AdminCommonName:        "TrustMate Admin Access",
 			ServerCommonName:       "TrustMate REST API",
+			TSACommonName:          "TrustMate TSA",
 			RootValidity:           10 * 365 * 24 * time.Hour,
 			IntermediateValidity:   5 * 365 * 24 * time.Hour,
 			AdminValidity:          365 * 24 * time.Hour,
 			ServerValidity:         365 * 24 * time.Hour,
+			TSAValidity:            2 * 365 * 24 * time.Hour,
 		},
 		Profiles: ProfilesConfig{},
 	}
