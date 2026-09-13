@@ -5,7 +5,7 @@ A self-contained Certificate Authority service — CA issuance, CRL, OCSP
 dockerized, modular Go binary. No dependency on any other CA/TSA product,
 only open-source libraries.
 
-Status: **early development.** See [`docs/design.md`](docs/design.md) for
+Status: **testing**. See [`docs/design.md`](docs/design.md) for
 the full design, module breakdown, REST API sketch, and phased roadmap.
 
 ## Why
