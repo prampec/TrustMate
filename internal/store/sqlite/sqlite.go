@@ -44,7 +44,7 @@ func Open(dsn string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("sqlite: enabling foreign keys: %w", err)
 	}
 
-	if err := migrate(db); err != nil {
+	if err := runMigrations(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -74,4 +74,27 @@ func (s *SQLiteStore) Audit() store.AuditRepository {
 
 func (s *SQLiteStore) ClientRoles() store.ClientRoleRepository {
 	return clientRoleRepository{db: s.db}
+}
+
+func (s *SQLiteStore) ACMEEABTokens() store.ACMEEABTokenRepository {
+	return acmeEABTokenRepository{db: s.db}
+}
+
+func (s *SQLiteStore) ACMEAccounts() store.ACMEAccountRepository {
+	return acmeAccountRepository{db: s.db}
+}
+
+func (s *SQLiteStore) ACMEOrders() store.ACMEOrderRepository {
+	return acmeOrderRepository{db: s.db}
+}
+
+func (s *SQLiteStore) ACMENonces() store.ACMENonceRepository {
+	return acmeNonceRepository{db: s.db}
+}
+
+// WithExclusiveLock backs store.Store's method. SQLite is single-process
+// by construction (see Open's SetMaxOpenConns(1) above), so there's only
+// ever one replica to serialize against -- fn just runs directly.
+func (s *SQLiteStore) WithExclusiveLock(_ context.Context, _ int64, fn func() error) error {
+	return fn()
 }

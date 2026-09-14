@@ -63,11 +63,96 @@ func TestLoadMalformedYAMLErrors(t *testing.T) {
 func TestLoadUnsupportedDriverErrors(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("store:\n  driver: postgres\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("store:\n  driver: mysql\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("Load with unsupported driver returned nil error, want error")
+	}
+}
+
+func TestLoadPostgresDriverAccepted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("store:\n  driver: postgres\n  dsn: postgres://localhost/trustmate\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load with store.driver=postgres: %v", err)
+	}
+	if cfg.Store.Driver != "postgres" {
+		t.Errorf("Store.Driver = %q, want postgres", cfg.Store.Driver)
+	}
+}
+
+func TestLoadUnsupportedKeystoreDriverErrors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("keystore:\n  driver: aws-kms\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load with unsupported keystore driver returned nil error, want error")
+	}
+}
+
+func TestLoadPKCS11KeystoreDriverAccepted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yamlContent := "keystore:\n  driver: pkcs11\n  pkcs11:\n    module_path: /usr/lib/softhsm/libsofthsm2.so\n    token_label: trustmate\n"
+	if err := os.WriteFile(path, []byte(yamlContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load with keystore.driver=pkcs11: %v", err)
+	}
+	if cfg.Keystore.Driver != "pkcs11" {
+		t.Errorf("Keystore.Driver = %q, want pkcs11", cfg.Keystore.Driver)
+	}
+	if cfg.Keystore.PKCS11.TokenLabel != "trustmate" {
+		t.Errorf("Keystore.PKCS11.TokenLabel = %q, want trustmate", cfg.Keystore.PKCS11.TokenLabel)
+	}
+}
+
+func TestLoadPKCS11TokenLabelAndSlotNumberMutuallyExclusive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yamlContent := "keystore:\n  driver: pkcs11\n  pkcs11:\n    token_label: trustmate\n    slot_number: 0\n"
+	if err := os.WriteFile(path, []byte(yamlContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("Load with both pkcs11 token_label and slot_number set returned nil error, want error")
+	}
+}
+
+func TestApplyEnvOverridesPKCS11SlotNumber(t *testing.T) {
+	cfg := Defaults()
+	t.Setenv("TRUSTMATE_PKCS11_SLOT_NUMBER", "3")
+	ApplyEnvOverrides(&cfg)
+	if cfg.Keystore.PKCS11.SlotNumber == nil || *cfg.Keystore.PKCS11.SlotNumber != 3 {
+		t.Errorf("Keystore.PKCS11.SlotNumber = %v, want *3", cfg.Keystore.PKCS11.SlotNumber)
+	}
+}
+
+func TestLoadVaultKeystoreDriverAccepted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yamlContent := "keystore:\n  driver: vault\n  vault:\n    address: https://vault.example.com\n    transit_mount: transit\n"
+	if err := os.WriteFile(path, []byte(yamlContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load with keystore.driver=vault: %v", err)
+	}
+	if cfg.Keystore.Driver != "vault" {
+		t.Errorf("Keystore.Driver = %q, want vault", cfg.Keystore.Driver)
+	}
+	if cfg.Keystore.Vault.Address != "https://vault.example.com" {
+		t.Errorf("Keystore.Vault.Address = %q, want https://vault.example.com", cfg.Keystore.Vault.Address)
 	}
 }
 

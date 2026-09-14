@@ -20,6 +20,7 @@ import (
 type ModuleConfig struct {
 	EnableRevocation bool
 	EnableTSA        bool
+	EnableACME       bool
 }
 
 // ReadyChecker reports whether the service is ready to take traffic
@@ -62,6 +63,20 @@ func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 		mux.HandleFunc("POST /v1/tsa", handleTSA(deps))
 		mux.HandleFunc("POST /v1/tsa/rotate", requireRole(deps, store.RoleAdmin, handleRotateTSA(deps)))
 		deps.Logger.Info("tsa module enabled")
+	}
+
+	if deps.ModuleConfig.EnableACME {
+		mux.HandleFunc("POST /v1/acme/eab-tokens", requireRole(deps, store.RoleAdmin, handleIssueEABToken(deps)))
+		mux.HandleFunc("GET /v1/acme/directory", handleACMEDirectory(deps))
+		mux.HandleFunc("GET /v1/acme/new-nonce", handleACMENewNonce(deps))
+		mux.HandleFunc("HEAD /v1/acme/new-nonce", handleACMENewNonce(deps))
+		mux.HandleFunc("POST /v1/acme/new-account", handleACMENewAccount(deps))
+		mux.HandleFunc("POST /v1/acme/new-order", handleACMENewOrder(deps))
+		mux.HandleFunc("GET /v1/acme/order/{id}", handleACMEGetOrder(deps))
+		mux.HandleFunc("POST /v1/acme/order/{id}/finalize", handleACMEFinalize(deps))
+		mux.HandleFunc("GET /v1/acme/authorization/{id}", handleACMEGetAuthorization(deps))
+		mux.HandleFunc("GET /v1/acme/certificate/{id}", handleACMECertificate(deps))
+		deps.Logger.Info("acme module enabled")
 	}
 
 	return withRequestLogging(deps.Logger, mux)

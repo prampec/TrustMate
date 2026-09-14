@@ -165,13 +165,27 @@ sprawl"):
    rules), not database rows edited through a UI. A profile is just data;
    changing one is a config change + restart, reviewable in a PR.
 5. **`keystore`** — abstraction over "where do private keys live." v1:
-   encrypted file per key. Seam left open for PKCS#11 or a cloud KMS later
-   without touching the CA/TSA/revocation logic.
+   encrypted file per key (`file`, the default). Phase 5 adds two more
+   backends behind the same seam, selected via `keystore.driver`: `vault`
+   (HashiCorp Vault's Transit secrets engine — keys never leave Vault,
+   `Sign` is a network round trip) and `pkcs11` (a real HSM or SoftHSM2,
+   built only into the opt-in cgo binary — see `Dockerfile.pkcs11` —
+   since it needs to `dlopen` a vendor `.so` the default
+   `CGO_ENABLED=0` scratch build can't load). None of `pki`/`tsa`/
+   `revocation` changed to support this — they only ever held a
+   `keystore.KeyStore` interface value.
 6. **`store`** — issued-certificate ledger, serial number allocation,
-   revocation records, audit log, behind an interface. SQLite is the v1
-   default (single file, trivially backed up, trivially mounted into a
-   container volume); Postgres is the scale-out option, chosen so
-   supporting it later doesn't require touching call sites.
+   revocation records, audit log, ACME accounts/orders/EAB tokens/nonces,
+   behind an interface. SQLite is the default (single file, trivially
+   backed up, trivially mounted into a container volume); Postgres
+   (`store.driver: postgres`) is the scale-out option, needed for
+   HA/clustering (multiple stateless API replicas behind a load
+   balancer) since SQLite is deliberately single-process (see
+   `internal/store/sqlite.Open`'s `SetMaxOpenConns(1)`). Both
+   implementations are hand-written SQL over `database/sql`, not an ORM —
+   consistent with the rest of the codebase's near-zero-dependency style
+   and so the two backends can't drift into different data-access
+   paradigms.
 7. **`api`** — the REST surface. Thin: validates input, calls into the
    modules above, serializes responses. No business logic lives here. Also
    owns the cross-cutting HTTP concerns: `/healthz`, `/readyz`, `/metrics`,
@@ -185,6 +199,20 @@ sprawl"):
    logging interface (structured, JSON-to-stdout by default) that
    downstream deployments can wire into their log pipeline of choice, plus
    the Prometheus metrics registry used by `api` and the other modules.
+10. **`acme`** — Phase 5's automated enrollment endpoint (RFC 8555 subset).
+    TrustMate's certificates are role-bound API-access client certs, not
+    domain-validated web certs, so authorization uses RFC 8555 section
+    7.3.4's External Account Binding (an admin-issued, one-time HMAC
+    credential — `POST /v1/acme/eab-tokens`, admin role required) instead
+    of http-01/dns-01 domain challenges: an order goes straight from
+    created to `ready` since EAB already proved an admin authorized this
+    enrollment, the same trust decision `POST /v1/clients` makes
+    directly. `internal/acme` holds the JWS/JWK primitives (used to parse
+    and verify ACME's signed requests and compute the RFC 7638 account
+    thumbprint); `internal/api/acme.go` wires them into the REST surface
+    and reuses the same issuance path (`issueLeafCertificate`) as
+    `POST /v1/clients`. Enable/disable via config (`modules.acme`, off by
+    default); when disabled, no `/v1/acme/*` routes are registered.
 
 ## REST API sketch
 
@@ -199,6 +227,16 @@ POST   /v1/certificates/{serial}/revoke
 GET    /v1/crl/{ca}.crl              CRL Distribution Point target        (revocation module)
 POST   /v1/ocsp                      RFC 6960 OCSP responder              (revocation module)
 POST   /v1/tsa                       RFC 3161 TSA (application/timestamp-query) (tsa module)
+
+POST   /v1/acme/eab-tokens           admin issues an enrollment credential (acme module)
+GET    /v1/acme/directory            RFC 8555 directory object            (acme module)
+GET    /v1/acme/new-nonce            replay-nonce issuance                (acme module)
+POST   /v1/acme/new-account          account creation, EAB required       (acme module)
+POST   /v1/acme/new-order            order creation                       (acme module)
+GET    /v1/acme/order/{id}
+POST   /v1/acme/order/{id}/finalize  submit CSR, issue the certificate
+GET    /v1/acme/authorization/{id}
+GET    /v1/acme/certificate/{id}     PEM chain download
 
 GET    /v1/profiles                  list, manage available certificate profiles
 POST   /v1/profiles/reload           re-read profile config without restart
@@ -215,6 +253,12 @@ Auth: mutual TLS client certs or a bearer token for `/v1/certificates` and
 unauthenticated (they're public PKI endpoints by design, same as today's
 Caddy-fronted setup). `/healthz`, `/readyz`, `/metrics` are typically only
 exposed on a private/ops network, not through the public-facing proxy.
+`/v1/acme/eab-tokens` requires admin role like `/v1/clients`; every other
+`/v1/acme/*` route authenticates via its own RFC 8555 JWS signature
+(account-key or, for `new-account`, the External Account Binding), not
+mTLS or a bearer token — that's the entire point of ACME as an enrollment
+mechanism, so requiring an existing client cert to obtain one would be
+circular.
 
 ## Phased roadmap
 
@@ -238,12 +282,24 @@ request-level auth (mTLS or bearer tokens).
 
 **Phase 4**: storage interface's Postgres implementation (alongside
 SQLite), so the API layer can run as multiple stateless replicas behind a
-load balancer.
+load balancer. Implemented as part of Phase 5 (below), as a prerequisite
+for its HA/clustering item — `store.driver: postgres` is an
+application-level option; SQLite stays the default.
 
 **Phase 5 (stretch)**: PKCS#11/KMS-backed keystore option, ACME endpoint
 for automated client enrollment, HA/clustering topology, minimal
 read-only status UI (explicitly *not* an admin/config UI — just "what's
 issued, what's revoked").
+
+Implemented: the KMS keystore option (HashiCorp Vault Transit —
+self-hostable and cloud-neutral, matching this project's positioning —
+`keystore.driver: vault`), PKCS#11 (`keystore.driver: pkcs11`, only in
+the binary built with `-tags pkcs11`, see `Dockerfile.pkcs11`), the ACME
+endpoint (module 10 above), and the HA/clustering prerequisites (Phase 4
+Postgres, plus the bootstrap-race fix and other notes under "HA /
+clustering considerations" below). Not implemented: the read-only status
+UI — no existing scaffolding to build on (this is a REST-only, no-GUI
+service by design), left for a later pass.
 
 ## Security considerations
 
@@ -254,9 +310,60 @@ issued, what's revoked").
   serial, when) — append-only table, exposed read-only via `/v1/audit`.
 - TSA responses must include a nonce echo and enforce monotonic-ish
   timestamps to make replay/backdating detectable, per RFC 3161 good
-  practice.
+  practice. This guard (`internal/tsa`) is in-memory, per process, by
+  design: under HA/clustering (multiple stateless replicas behind a load
+  balancer), monotonicity holds per-replica, not service-wide — a
+  deliberate tradeoff, not an oversight. RFC 3161's "monotonic-ish"
+  property exists to catch gross backdating/replay of a *given* token,
+  not to give strict cross-request ordering, and `/v1/tsa` is the
+  endpoint every client hits most often (see the rate-limiting bullet
+  below) — moving the guard into the shared store to close this narrow
+  edge case would add a synchronous datastore round trip to the hottest
+  request path for a marginal correctness gain.
 - Rate-limit `/v1/ocsp` and `/v1/tsa` (public, unauthenticated) since
   they're the endpoints every client hits repeatedly.
+- ACME's replay-nonce mechanism (RFC 8555 section 6.5), by contrast, *is*
+  backed by the shared store (`store.ACMENonceRepository`), not held
+  in-process — nonce issuance and consumption need to be correct across
+  replicas (a client's `new-nonce` call and its follow-up request can
+  land on different replicas), and ACME account/order setup is
+  comparatively low-frequency and not latency-sensitive, unlike
+  `/v1/tsa`, so the extra round trip is an acceptable cost there.
+
+## HA / clustering considerations
+
+Phase 5's HA/clustering item turned out to be mostly wiring and
+verification against the existing design, plus two real gaps:
+
+- **Shared datastore is required**: `store.driver: postgres` (see module
+  6 above). SQLite remains intentionally single-process
+  (`SetMaxOpenConns(1)` in `internal/store/sqlite/sqlite.go`) — that's
+  not a bug to fix, it's the tradeoff for SQLite's zero-ops simplicity.
+- **Bootstrap race, fixed**: `bootstrap.Run`'s first-run CA generation
+  checks for existing CA material and generates it if absent — a
+  classic check-then-act race if two replicas start simultaneously
+  against a fresh, empty Postgres. `cmd/trustmated` now wraps that call
+  in a Postgres advisory lock (`postgres.WithAdvisoryLock`,
+  `postgres.BootstrapLockKey`) when `store.driver` is `postgres`, so
+  only one replica performs first-run generation; the rest block
+  briefly, then find CA material already present. SQLite deployments
+  don't need this (single process by construction).
+- **Keystore reachability**: every replica needs identical key access.
+  The `vault` keystore backend satisfies this by being network-based.
+  The `file` backend is not the HA-oriented option — using it under HA
+  would need a shared read path and single-writer discipline for
+  key generation/rotation; this is a documented constraint, not
+  something the code coordinates for, since `vault`/`pkcs11` (a shared
+  HSM) are the backends actually meant for multi-replica deployment.
+- **CRL/OCSP need no changes**: `revocation.CRLBuilder`'s in-memory,
+  per-process cache regenerates independently on each replica from the
+  shared store when it goes stale — no cross-replica coordination
+  needed, since it's purely a read-through cache over shared state.
+- **TSA monotonicity**: per-replica, as discussed above.
+- **Stateless auth, verified**: `requireRole` (`internal/api/auth.go`)
+  re-checks the caller's role from the store on every request; there's
+  no server-side session state anywhere in the request path, so nothing
+  needed to change here.
 
 ## Open questions to resolve before starting
 
@@ -278,3 +385,22 @@ issued, what's revoked").
 ## Verifications of the implementation
 
 - Revocation list info is already available in the intermediate certificate if module is enabled.
+- `store.driver: postgres` behaves identically to the SQLite default for
+  every existing route (issue/revoke/CRL/OCSP/TSA) — verified by running
+  `internal/store/storetest`'s shared contract suite against both
+  backends (`internal/store/sqlite` and `internal/store/postgres`).
+- `keystore.driver: vault` produces certificates indistinguishable from
+  `file`-backed ones (same seam, same `crypto.Signer` contract) —
+  verified by `internal/keystore/keystoretest`'s shared contract suite,
+  including a real signature-verification round trip, run against both.
+- An ACME client can complete `new-account` (with External Account
+  Binding) → `new-order` → `finalize` → certificate download without any
+  domain-validation step, and the issued certificate carries the role
+  bound to the EAB token that created the account — verified end to end
+  in `internal/api/acme_test.go` against a from-scratch test ACME client
+  (real ES256/HS256 JWS signing, not mocked).
+- Two `trustmated` replicas started simultaneously against the same
+  empty Postgres database produce exactly one root/intermediate CA, not
+  two — verified by `TestWithAdvisoryLockSerializes` in
+  `internal/store/postgres`, which checks the underlying mutual-exclusion
+  property `cmd/trustmated`'s bootstrap wrapping depends on.

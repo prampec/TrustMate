@@ -28,6 +28,8 @@ func main() {
 		runClients(os.Args[2:])
 	case "audit":
 		runAudit(os.Args[2:])
+	case "acme":
+		runACME(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -43,6 +45,7 @@ Usage:
   trustmate-admin clients add      --csr=<file> --role=admin|manager [flags]
   trustmate-admin clients list     [flags]
   trustmate-admin audit list       [--limit=N] [flags]
+  trustmate-admin acme issue-eab-token --role=admin|manager [flags]
 
 Flags (all connection flags default from TRUSTMATE_CLIENT_{SERVER,CERT,KEY,CA}):
   --server   TrustMate server base URL (default https://localhost:8080)
@@ -144,6 +147,31 @@ func runAudit(args []string) {
 	}
 	var out any
 	if err := client.Get(path, &out); err != nil {
+		fatal(err)
+	}
+	printJSON(out)
+}
+
+// runACME issues an External Account Binding token -- the credential
+// that starts RFC 8555 automated enrollment (see internal/api/acme.go
+// and docs/design.md's Phase 5 roadmap entry). The printed hmac_key is
+// shown once; the server never returns it again.
+func runACME(args []string) {
+	if len(args) < 1 || args[0] != "issue-eab-token" {
+		usage()
+		os.Exit(2)
+	}
+	fs := flag.NewFlagSet("acme issue-eab-token", flag.ExitOnError)
+	connFlags := cliclient.RegisterFlags(fs)
+	role := fs.String("role", "manager", "role to bind issued certificates to: admin or manager")
+	if err := fs.Parse(args[1:]); err != nil {
+		fatal(err)
+	}
+	client := mustClient(connFlags)
+
+	var out any
+	body := map[string]string{"role": *role}
+	if err := client.Post("/v1/acme/eab-tokens", body, &out); err != nil {
 		fatal(err)
 	}
 	printJSON(out)

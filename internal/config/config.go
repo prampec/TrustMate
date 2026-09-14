@@ -35,17 +35,61 @@ type LogConfig struct {
 type ModulesConfig struct {
 	Revocation bool `yaml:"revocation"`
 	TSA        bool `yaml:"tsa"`
+	// ACME enables RFC 8555 automated enrollment via External Account
+	// Binding (see internal/acme, internal/api/acme.go, and
+	// docs/design.md's Phase 5 roadmap entry). Off by default: it's an
+	// additional certificate-issuance surface an operator opts into,
+	// not something every deployment needs.
+	ACME bool `yaml:"acme"`
 }
 
 type StoreConfig struct {
-	// Driver is validated against the set of supported datastore backends.
-	// Only "sqlite" is supported in Phase 0.
+	// Driver is validated against the set of supported datastore backends:
+	// "sqlite" (the default -- a single file, no separate service to run)
+	// or "postgres" (a shared datastore multiple stateless API replicas
+	// can point at, see docs/design.md's HA/clustering notes).
 	Driver string `yaml:"driver"`
 	DSN    string `yaml:"dsn"`
 }
 
 type KeystoreConfig struct {
-	Dir string `yaml:"dir"`
+	// Driver selects the KeyStore backend: "file" (the default -- an
+	// encrypted file per key, see internal/keystore.FileKeyStore),
+	// "vault" (HashiCorp Vault's Transit secrets engine, keys never
+	// touching local disk -- see internal/keystore.VaultKeyStore), or
+	// "pkcs11" (a PKCS#11 token/HSM -- see internal/keystore.PKCS11KeyStore;
+	// only usable in a binary built with the "pkcs11" build tag, see
+	// Dockerfile.pkcs11). All three are part of docs/design.md's Phase 5
+	// roadmap entry.
+	Driver string               `yaml:"driver"`
+	Dir    string               `yaml:"dir"`
+	Vault  VaultKeystoreConfig  `yaml:"vault"`
+	PKCS11 PKCS11KeystoreConfig `yaml:"pkcs11"`
+}
+
+// VaultKeystoreConfig holds the non-secret Vault connection settings.
+// The auth token is deliberately not a config field -- see
+// keystore.LoadVaultToken, which resolves it the same out-of-band way
+// LoadKEK resolves the file keystore's passphrase, so it never ends up
+// alongside a logged configuration struct.
+type VaultKeystoreConfig struct {
+	Address      string `yaml:"address"`
+	TransitMount string `yaml:"transit_mount"`
+}
+
+// PKCS11KeystoreConfig holds the non-secret PKCS#11 token connection
+// settings. The PIN is deliberately not a config field -- see
+// keystore.LoadPKCS11PIN, which resolves it the same out-of-band way
+// LoadKEK resolves the file keystore's passphrase.
+type PKCS11KeystoreConfig struct {
+	// ModulePath is the path to the vendor's PKCS#11 .so, mounted into
+	// the container at deploy time (see Dockerfile.pkcs11).
+	ModulePath string `yaml:"module_path"`
+	TokenLabel string `yaml:"token_label"`
+	// SlotNumber, if non-nil, selects the token by slot instead of by
+	// label -- crypto11.Config treats specifying both as an error, so
+	// only one of TokenLabel/SlotNumber should be set.
+	SlotNumber *int `yaml:"slot_number"`
 }
 
 // BootstrapConfig drives the first-run generation of the root CA,
@@ -91,7 +135,8 @@ func Defaults() Config {
 			DSN:    "./data/trustmate.db",
 		},
 		Keystore: KeystoreConfig{
-			Dir: "./data/keys",
+			Driver: "file",
+			Dir:    "./data/keys",
 		},
 		Bootstrap: BootstrapConfig{
 			OutputDir:              "./data/bootstrap",

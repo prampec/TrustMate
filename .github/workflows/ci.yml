@@ -8,14 +8,72 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: trustmate
+          POSTGRES_PASSWORD: trustmate
+          POSTGRES_DB: trustmate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      vault:
+        image: hashicorp/vault:1.17
+        env:
+          VAULT_DEV_ROOT_TOKEN_ID: trustmate-ci-token
+          VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+    env:
+      # internal/store/postgres and internal/keystore's Vault-backed
+      # tests skip cleanly when these are unset (e.g. local/agent
+      # sandboxes without Docker) -- CI has the services above, so it
+      # exercises the real backends.
+      TRUSTMATE_PG_TEST_DSN: postgres://trustmate:trustmate@localhost:5432/trustmate_test?sslmode=disable
+      TRUSTMATE_VAULT_TEST_ADDR: http://localhost:8200
+      TRUSTMATE_VAULT_TEST_TOKEN: trustmate-ci-token
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+      - name: Enable Vault transit secrets engine
+        run: |
+          curl -sf -H "X-Vault-Token: $TRUSTMATE_VAULT_TEST_TOKEN" \
+            -X POST -d '{"type":"transit"}' \
+            "$TRUSTMATE_VAULT_TEST_ADDR/v1/sys/mounts/transit"
       - run: go build ./...
+      # Build-only: confirms the cgo pkcs11 build tag compiles (gcc is
+      # preinstalled on ubuntu-latest). Real PKCS#11-backed test coverage
+      # against a SoftHSM2 token lives in the pkcs11 job below -- it
+      # needs a token to be initialized first, which this job doesn't do.
+      - run: go build -tags pkcs11 ./...
       - run: go vet ./...
       - run: go test ./...
+
+  pkcs11:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Install SoftHSM2
+        run: sudo apt-get update && sudo apt-get install -y softhsm2
+      - name: Initialize a SoftHSM2 token
+        run: |
+          softhsm2-util --init-token --free --label trustmate-ci \
+            --pin 1234 --so-pin 5678
+      - run: go test -tags pkcs11 ./internal/keystore/...
+        env:
+          TRUSTMATE_PKCS11_TEST_MODULE_PATH: /usr/lib/softhsm/libsofthsm2.so
+          TRUSTMATE_PKCS11_TEST_TOKEN_LABEL: trustmate-ci
+          TRUSTMATE_PKCS11_TEST_PIN: "1234"
 
   docker:
     runs-on: ubuntu-latest
@@ -28,3 +86,9 @@ jobs:
           context: .
           push: false
           tags: trustmate:ci
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.pkcs11
+          push: false
+          tags: trustmate:ci-pkcs11

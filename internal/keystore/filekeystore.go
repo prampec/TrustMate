@@ -50,6 +50,8 @@ type FileKeyStore struct {
 
 	mu     sync.Mutex
 	cached map[KeyRef]crypto.Signer
+
+	locks *refLocker
 }
 
 // NewFileKeyStore opens (creating if necessary) a file-backed keystore
@@ -65,6 +67,7 @@ func NewFileKeyStore(dir string, passphrase []byte) (*FileKeyStore, error) {
 		dir:        dir,
 		passphrase: passphrase,
 		cached:     make(map[KeyRef]crypto.Signer),
+		locks:      newRefLocker(),
 	}, nil
 }
 
@@ -84,6 +87,8 @@ func (f *FileKeyStore) Exists(ctx context.Context, ref KeyRef) (bool, error) {
 }
 
 func (f *FileKeyStore) Generate(ctx context.Context, ref KeyRef, alg Algorithm) (crypto.Signer, error) {
+	defer f.locks.lock(ref)()
+
 	exists, err := f.Exists(ctx, ref)
 	if err != nil {
 		return nil, err

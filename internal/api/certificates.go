@@ -1,9 +1,13 @@
 package api
 
 import (
+	"context"
+	"crypto"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -37,6 +41,88 @@ var revocationReasons = map[string]bool{
 	"affiliationChanged":   true,
 	"superseded":           true,
 	"cessationOfOperation": true,
+}
+
+// issueLeafCertificate builds and signs a leaf certificate from profile
+// against subject/publicKey/dnsNames, persists it, and appends an audit
+// entry -- the sequence every leaf-issuing route needs
+// (POST /v1/certificates, POST /v1/clients, and the ACME finalize
+// handler in internal/api/acme.go), factored out so it's defined once
+// rather than three times. It deliberately does NOT increment
+// CertificatesIssuedTotal: POST /v1/clients and ACME finalize both still
+// have a role-assignment step that can compensating-revoke this
+// certificate before it's ever usable (see assignRoleOrRevoke), so each
+// caller increments the metric itself once it knows the certificate is
+// actually staying issued.
+func issueLeafCertificate(ctx context.Context, deps Deps, profile profiles.Profile, subject pkix.Name, publicKey crypto.PublicKey, dnsNames []string, now time.Time, actor, auditAction, auditDetail string) (store.CertificateRecord, error) {
+	cert, err := pki.IssueLeaf(profile, subject, publicKey, deps.IntermediateIssuer, now, now.Add(profile.Validity), dnsNames)
+	if err != nil {
+		return store.CertificateRecord{}, fmt.Errorf("issuing certificate: %w", err)
+	}
+
+	rec := store.CertificateRecord{
+		Serial:       cert.SerialNumber.String(),
+		Kind:         store.CertKindLeaf,
+		ProfileName:  profile.Name,
+		Subject:      cert.Subject.String(),
+		IssuerSerial: deps.IntermediateIssuer.Cert.SerialNumber.String(),
+		NotBefore:    cert.NotBefore,
+		NotAfter:     cert.NotAfter,
+		PEM:          encodeCertPEM(cert.Raw),
+		CreatedAt:    now.UTC(),
+	}
+	if err := deps.Store.Certificates().Create(ctx, rec); err != nil {
+		return store.CertificateRecord{}, fmt.Errorf("persisting issued certificate: %w", err)
+	}
+	if err := deps.Store.Audit().Append(ctx, store.AuditEntry{
+		Timestamp: now.UTC(),
+		Actor:     actor,
+		Action:    auditAction,
+		Target:    rec.Serial,
+		Detail:    auditDetail,
+	}); err != nil {
+		return store.CertificateRecord{}, fmt.Errorf("writing audit entry: %w", err)
+	}
+	return rec, nil
+}
+
+// assignRoleOrRevoke assigns role to rec.Serial. issueLeafCertificate
+// has already persisted the certificate and written an audit entry by
+// the time callers reach this, so on assignment failure it attempts a
+// compensating revoke of that certificate rather than leaving a
+// certificate that authenticates via mTLS but authorizes nothing --
+// every requireRole check would silently deny it, while the audit log
+// still claims a successful issuance. Returns the original assignment
+// error either way (the compensating revoke's own failure is only
+// logged, since there's no more informative error to surface to the
+// caller than the one that triggered it).
+func assignRoleOrRevoke(ctx context.Context, deps Deps, rec store.CertificateRecord, role store.ClientRole, now time.Time) error {
+	err := deps.Store.ClientRoles().Assign(ctx, store.ClientRoleRecord{
+		CertSerial: rec.Serial,
+		Role:       role,
+		CreatedAt:  now.UTC(),
+	})
+	if err == nil {
+		return nil
+	}
+	if revokeErr := deps.Store.Certificates().Revoke(ctx, rec.Serial, "unspecified", now); revokeErr != nil {
+		deps.Logger.Error("compensating revoke after failed role assignment also failed", "serial", rec.Serial, "err", revokeErr)
+		return err
+	}
+	// Every other revocation path (handleRevokeCertificate) appends a
+	// matching audit entry; without one here the audit log would keep
+	// showing only the original issuance for a certificate that no
+	// longer works, misrepresenting its real state.
+	if auditErr := deps.Store.Audit().Append(ctx, store.AuditEntry{
+		Timestamp: now.UTC(),
+		Actor:     "system:compensating-revoke",
+		Action:    "revoke",
+		Target:    rec.Serial,
+		Detail:    "unspecified",
+	}); auditErr != nil {
+		deps.Logger.Error("writing compensating-revoke audit entry failed", "serial", rec.Serial, "err", auditErr)
+	}
+	return err
 }
 
 type issueCertificateRequest struct {
@@ -88,50 +174,23 @@ func handleIssueCertificate(deps Deps) http.HandlerFunc {
 
 		profile = profile.WithIssuerURLs(deps.PublicBaseURL, deps.ModuleConfig.EnableRevocation)
 		now := time.Now()
-		cert, err := pki.IssueLeaf(profile, csr.Subject, csr.PublicKey,
-			deps.IntermediateIssuer, now, now.Add(profile.Validity), csr.DNSNames)
+		rec, err := issueLeafCertificate(r.Context(), deps, profile, csr.Subject, csr.PublicKey, csr.DNSNames, now, r.RemoteAddr, "issue", profile.Name)
 		if err != nil {
 			deps.Logger.Error("issuing certificate failed", "profile", profile.Name, "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-
-		rec := store.CertificateRecord{
-			Serial:       cert.SerialNumber.String(),
-			Kind:         store.CertKindLeaf,
-			ProfileName:  profile.Name,
-			Subject:      cert.Subject.String(),
-			IssuerSerial: deps.IntermediateIssuer.Cert.SerialNumber.String(),
-			NotBefore:    cert.NotBefore,
-			NotAfter:     cert.NotAfter,
-			PEM:          encodeCertPEM(cert.Raw),
-			CreatedAt:    now.UTC(),
-		}
-		if err := deps.Store.Certificates().Create(r.Context(), rec); err != nil {
-			deps.Logger.Error("persisting issued certificate failed", "serial", rec.Serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		if err := deps.Store.Audit().Append(r.Context(), store.AuditEntry{
-			Timestamp: now.UTC(),
-			Actor:     r.RemoteAddr,
-			Action:    "issue",
-			Target:    rec.Serial,
-			Detail:    profile.Name,
-		}); err != nil {
-			deps.Logger.Error("writing audit entry failed", "serial", rec.Serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
+		// No role-assignment step on this route (unlike POST /v1/clients
+		// and ACME finalize), so the certificate is usable the instant
+		// it's issued -- safe to count immediately.
 		if deps.Metrics != nil {
 			deps.Metrics.CertificatesIssuedTotal.WithLabelValues(profile.Name).Inc()
 		}
-
 		writeJSON(w, http.StatusCreated, issueCertificateResponse{
 			Serial:    rec.Serial,
 			Profile:   profile.Name,
-			NotBefore: cert.NotBefore,
-			NotAfter:  cert.NotAfter,
+			NotBefore: rec.NotBefore,
+			NotAfter:  rec.NotAfter,
 			PEM:       string(rec.PEM),
 		})
 	}

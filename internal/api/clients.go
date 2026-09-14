@@ -53,50 +53,20 @@ func handleIssueClient(deps Deps) http.HandlerFunc {
 
 		profile := profiles.Default().WithIssuerURLs(deps.PublicBaseURL, deps.ModuleConfig.EnableRevocation)
 		now := time.Now()
-		cert, err := pki.IssueLeaf(profile, csr.Subject, csr.PublicKey,
-			deps.IntermediateIssuer, now, now.Add(profile.Validity), nil)
+		rec, err := issueLeafCertificate(r.Context(), deps, profile, csr.Subject, csr.PublicKey, nil, now, r.RemoteAddr, "client-issue", string(role))
 		if err != nil {
 			deps.Logger.Error("issuing client certificate failed", "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-
-		rec := store.CertificateRecord{
-			Serial:       cert.SerialNumber.String(),
-			Kind:         store.CertKindLeaf,
-			ProfileName:  profile.Name,
-			Subject:      cert.Subject.String(),
-			IssuerSerial: deps.IntermediateIssuer.Cert.SerialNumber.String(),
-			NotBefore:    cert.NotBefore,
-			NotAfter:     cert.NotAfter,
-			PEM:          encodeCertPEM(cert.Raw),
-			CreatedAt:    now.UTC(),
-		}
-		if err := deps.Store.Certificates().Create(r.Context(), rec); err != nil {
-			deps.Logger.Error("persisting client certificate failed", "serial", rec.Serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		if err := deps.Store.ClientRoles().Assign(r.Context(), store.ClientRoleRecord{
-			CertSerial: rec.Serial,
-			Role:       role,
-			CreatedAt:  now.UTC(),
-		}); err != nil {
+		if err := assignRoleOrRevoke(r.Context(), deps, rec, role, now); err != nil {
 			deps.Logger.Error("assigning client role failed", "serial", rec.Serial, "err", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		if err := deps.Store.Audit().Append(r.Context(), store.AuditEntry{
-			Timestamp: now.UTC(),
-			Actor:     r.RemoteAddr,
-			Action:    "client-issue",
-			Target:    rec.Serial,
-			Detail:    string(role),
-		}); err != nil {
-			deps.Logger.Error("writing audit entry failed", "serial", rec.Serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
+		// Only now, with the role assigned and the certificate confirmed
+		// usable (not compensating-revoked), does this count as a
+		// successful issuance -- see issueLeafCertificate's doc comment.
 		if deps.Metrics != nil {
 			deps.Metrics.CertificatesIssuedTotal.WithLabelValues(profile.Name).Inc()
 		}

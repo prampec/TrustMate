@@ -1,0 +1,25 @@
+# PKCS#11-enabled build variant -- opt-in, separate from the default
+# Dockerfile. PKCS#11 needs cgo and dlopen()-ing a vendor .so at runtime
+# (an HSM client library, or SoftHSM2 for testing), which the default
+# CGO_ENABLED=0 scratch image can't support. See docs/design.md's
+# Phase 5 roadmap entry and internal/keystore/pkcs11keystore.go.
+#
+# Build stage -- the official golang image ships gcc/build-essential
+# already, so CGO_ENABLED=1 needs no extra apt-get here.
+FROM golang:1.26 AS build
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -tags pkcs11 -ldflags="-s -w" -o /out/trustmated ./cmd/trustmated
+
+# Runtime stage -- a minimal glibc base, not scratch: the vendor's
+# PKCS#11 module is a dynamically loaded .so that needs a real libc
+# (and whatever shared libraries that module itself depends on) at
+# runtime. Mount the module in at deploy time, e.g.:
+#   -v /path/to/vendor-pkcs11.so:/usr/lib/pkcs11/vendor.so:ro
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/trustmated /trustmated
+EXPOSE 8080
+USER 65532:65532
+ENTRYPOINT ["/trustmated"]

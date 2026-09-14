@@ -17,6 +17,8 @@ type Metrics struct {
 	TSARequestsTotal         *prometheus.CounterVec
 	TSARequestDuration       prometheus.Histogram
 	StoreUp                  prometheus.Gauge
+	ACMEAccountsTotal        prometheus.Counter
+	ACMEOrdersTotal          *prometheus.CounterVec
 }
 
 // NewMetrics builds a Metrics with a fresh registry -- one per process.
@@ -53,6 +55,14 @@ func NewMetrics() *Metrics {
 			Name: "trustmate_store_up",
 			Help: "1 if the datastore was reachable on the last readiness check, else 0.",
 		}),
+		ACMEAccountsTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "trustmate_acme_accounts_total",
+			Help: "Total number of ACME accounts created via External Account Binding.",
+		}),
+		ACMEOrdersTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "trustmate_acme_orders_total",
+			Help: "Total number of ACME orders, by outcome (created, finalized).",
+		}, []string{"outcome"}),
 	}
 
 	reg.MustRegister(
@@ -63,6 +73,8 @@ func NewMetrics() *Metrics {
 		m.TSARequestsTotal,
 		m.TSARequestDuration,
 		m.StoreUp,
+		m.ACMEAccountsTotal,
+		m.ACMEOrdersTotal,
 	)
 	return m
 }
