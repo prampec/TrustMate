@@ -8,13 +8,19 @@ import "time"
 
 // Config is the top-level, fully-resolved configuration.
 type Config struct {
-	Server    ServerConfig    `yaml:"server"`
-	Log       LogConfig       `yaml:"log"`
-	Modules   ModulesConfig   `yaml:"modules"`
-	Store     StoreConfig     `yaml:"store"`
-	Keystore  KeystoreConfig  `yaml:"keystore"`
-	Bootstrap BootstrapConfig `yaml:"bootstrap"`
-	Profiles  ProfilesConfig  `yaml:"profiles"`
+	// InstanceName identifies this deployment -- it seeds the Common Name
+	// of every certificate generated at bootstrap (see RootCommonName
+	// etc.) and is surfaced in startup logs, /healthz, /readyz, and the
+	// trustmate_instance_info metric, so an operator running more than
+	// one TrustMate instance (or replica set) can tell them apart.
+	InstanceName string          `yaml:"instance_name"`
+	Server       ServerConfig    `yaml:"server"`
+	Log          LogConfig       `yaml:"log"`
+	Modules      ModulesConfig   `yaml:"modules"`
+	Store        StoreConfig     `yaml:"store"`
+	Keystore     KeystoreConfig  `yaml:"keystore"`
+	Bootstrap    BootstrapConfig `yaml:"bootstrap"`
+	Profiles     ProfilesConfig  `yaml:"profiles"`
 }
 
 type ServerConfig struct {
@@ -94,18 +100,16 @@ type PKCS11KeystoreConfig struct {
 
 // BootstrapConfig drives the first-run generation of the root CA,
 // intermediate CA, admin access certificate, and server TLS certificate.
+// Each certificate's Common Name is derived from Config.InstanceName (see
+// Config.RootCommonName and its siblings below) rather than configured
+// per-certificate here.
 type BootstrapConfig struct {
-	OutputDir              string        `yaml:"output_dir"`
-	RootCommonName         string        `yaml:"root_cn"`
-	IntermediateCommonName string        `yaml:"intermediate_cn"`
-	AdminCommonName        string        `yaml:"admin_cn"`
-	ServerCommonName       string        `yaml:"server_cn"`
-	TSACommonName          string        `yaml:"tsa_cn"`
-	RootValidity           time.Duration `yaml:"root_validity"`
-	IntermediateValidity   time.Duration `yaml:"intermediate_validity"`
-	AdminValidity          time.Duration `yaml:"admin_validity"`
-	ServerValidity         time.Duration `yaml:"server_validity"`
-	TSAValidity            time.Duration `yaml:"tsa_validity"`
+	OutputDir            string        `yaml:"output_dir"`
+	RootValidity         time.Duration `yaml:"root_validity"`
+	IntermediateValidity time.Duration `yaml:"intermediate_validity"`
+	AdminValidity        time.Duration `yaml:"admin_validity"`
+	ServerValidity       time.Duration `yaml:"server_validity"`
+	TSAValidity          time.Duration `yaml:"tsa_validity"`
 }
 
 type ProfilesConfig struct {
@@ -114,10 +118,23 @@ type ProfilesConfig struct {
 	Dir string `yaml:"dir"`
 }
 
+// RootCommonName, IntermediateCommonName, AdminCommonName,
+// ServerCommonName, and TSACommonName are the Common Names bootstrap
+// issues each first-run certificate under, each derived from
+// InstanceName (e.g. InstanceName "TrustMate" gives "TrustMate Root
+// CA"). There's no way to override one independently of the others --
+// InstanceName is the single knob.
+func (c Config) RootCommonName() string         { return c.InstanceName + " Root CA" }
+func (c Config) IntermediateCommonName() string { return c.InstanceName + " Intermediate CA" }
+func (c Config) AdminCommonName() string        { return c.InstanceName + " Admin Access" }
+func (c Config) ServerCommonName() string       { return c.InstanceName + " REST API" }
+func (c Config) TSACommonName() string          { return c.InstanceName + " TSA" }
+
 // Defaults returns the baseline configuration before any file or
 // environment overrides are applied.
 func Defaults() Config {
 	return Config{
+		InstanceName: "TrustMate",
 		Server: ServerConfig{
 			ListenAddr:    ":8080",
 			TLSSANs:       []string{"localhost"},
@@ -139,17 +156,12 @@ func Defaults() Config {
 			Dir:    "./data/keys",
 		},
 		Bootstrap: BootstrapConfig{
-			OutputDir:              "./data/bootstrap",
-			RootCommonName:         "TrustMate Root CA",
-			IntermediateCommonName: "TrustMate Intermediate CA",
-			AdminCommonName:        "TrustMate Admin Access",
-			ServerCommonName:       "TrustMate REST API",
-			TSACommonName:          "TrustMate TSA",
-			RootValidity:           10 * 365 * 24 * time.Hour,
-			IntermediateValidity:   5 * 365 * 24 * time.Hour,
-			AdminValidity:          365 * 24 * time.Hour,
-			ServerValidity:         365 * 24 * time.Hour,
-			TSAValidity:            2 * 365 * 24 * time.Hour,
+			OutputDir:            "./data/bootstrap",
+			RootValidity:         10 * 365 * 24 * time.Hour,
+			IntermediateValidity: 5 * 365 * 24 * time.Hour,
+			AdminValidity:        365 * 24 * time.Hour,
+			ServerValidity:       365 * 24 * time.Hour,
+			TSAValidity:          2 * 365 * 24 * time.Hour,
 		},
 		Profiles: ProfilesConfig{},
 	}

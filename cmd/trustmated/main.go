@@ -90,6 +90,7 @@ func main() {
 	}
 
 	logger := observability.NewLogger(os.Stdout, cfg.Log.Level)
+	logger.Info("trustmate starting", "instance", cfg.InstanceName)
 
 	// openStore and openKeyStore are independent I/O (a store connection
 	// plus migrations vs. a Vault/PKCS11/file keystore open, each
@@ -179,7 +180,7 @@ func main() {
 		}
 		tsaResponder = tsa.NewResponder(tsaIssuer, interIssuer.Cert)
 	}
-	metrics := observability.NewMetrics()
+	metrics := observability.NewMetrics(cfg.InstanceName)
 	ready := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -203,10 +204,11 @@ func main() {
 	router := api.NewRouter(api.Deps{
 		Logger:             logger,
 		Store:              db,
+		InstanceName:       cfg.InstanceName,
 		IntermediateIssuer: interIssuer,
 		PublicBaseURL:      cfg.Server.PublicBaseURL,
 		KeyStore:           ks,
-		TSACommonName:      cfg.Bootstrap.TSACommonName,
+		TSACommonName:      cfg.TSACommonName(),
 		TSAValidity:        cfg.Bootstrap.TSAValidity,
 		ModuleConfig:       mods,
 		Profiles:           profileRegistry,
@@ -228,7 +230,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		logger.Info("listening", "addr", cfg.Server.ListenAddr, "revocation", mods.EnableRevocation, "tsa", mods.EnableTSA)
+		logger.Info("listening", "instance", cfg.InstanceName, "addr", cfg.Server.ListenAddr, "revocation", mods.EnableRevocation, "tsa", mods.EnableTSA)
 		if err := server.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server failed", "err", err)
 			os.Exit(1)

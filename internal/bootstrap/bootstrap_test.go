@@ -327,7 +327,7 @@ func TestLoadTSAIssuerPicksUpRotatedIdentity(t *testing.T) {
 	// fresh ref (Generate refuses to overwrite refTSA), the same way
 	// internal/api's handler does via tsa.IssueIdentity.
 	rotated, _, err := tsa.IssueIdentity(ctx, "tsa-rotated", tsa.IdentityParams{
-		CommonName:        cfg.Bootstrap.TSACommonName,
+		CommonName:        cfg.TSACommonName(),
 		Validity:          cfg.Bootstrap.TSAValidity,
 		PublicBaseURL:     cfg.Server.PublicBaseURL,
 		RevocationEnabled: cfg.Modules.Revocation,

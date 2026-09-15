@@ -49,6 +49,7 @@ func LoadFromEnv(path string) (Config, error) {
 // The keystore passphrase (KEK) is deliberately NOT handled here -- see
 // keystore.LoadKEK -- so it never passes through this struct.
 func ApplyEnvOverrides(cfg *Config) {
+	strVar(&cfg.InstanceName, "TRUSTMATE_INSTANCE_NAME")
 	strVar(&cfg.Server.ListenAddr, "TRUSTMATE_LISTEN_ADDR")
 	strSliceVar(&cfg.Server.TLSSANs, "TRUSTMATE_TLS_SANS")
 	strVar(&cfg.Server.PublicBaseURL, "TRUSTMATE_PUBLIC_BASE_URL")

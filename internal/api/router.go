@@ -32,8 +32,8 @@ type ReadyChecker func() error
 func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /healthz", handleHealthz)
-	mux.HandleFunc("GET /readyz", handleReadyz(ready))
+	mux.HandleFunc("GET /healthz", handleHealthz(deps))
+	mux.HandleFunc("GET /readyz", handleReadyz(deps, ready))
 	mux.Handle("GET /metrics", handleMetrics(deps))
 
 	// pki core (certificate issuance) is always on. Public PKI artifact
@@ -82,22 +82,21 @@ func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 	return withRequestLogging(deps.Logger, mux)
 }
 
-func handleHealthz(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
+func handleHealthz(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "instance": deps.InstanceName})
+	}
 }
 
-func handleReadyz(ready ReadyChecker) http.HandlerFunc {
+func handleReadyz(deps Deps, ready ReadyChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ready != nil {
 			if err := ready(); err != nil {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				_ = json.NewEncoder(w).Encode(map[string]string{"status": "not ready", "reason": err.Error()})
+				writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not ready", "reason": err.Error(), "instance": deps.InstanceName})
 				return
 			}
 		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready", "instance": deps.InstanceName})
 	}
 }
 

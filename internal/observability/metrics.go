@@ -10,6 +10,11 @@ import (
 type Metrics struct {
 	Registry *prometheus.Registry
 
+	// InstanceInfo is always 1, labeled with the configured instance
+	// name -- the standard Prometheus "info metric" pattern (cf.
+	// *_build_info) for surfacing a label on a target with no natural
+	// numeric value of its own.
+	InstanceInfo             prometheus.Gauge
 	CertificatesIssuedTotal  *prometheus.CounterVec
 	CertificatesRevokedTotal prometheus.Counter
 	OCSPRequestsTotal        *prometheus.CounterVec
@@ -22,11 +27,17 @@ type Metrics struct {
 }
 
 // NewMetrics builds a Metrics with a fresh registry -- one per process.
-func NewMetrics() *Metrics {
+// instanceName labels InstanceInfo (see Config.InstanceName).
+func NewMetrics(instanceName string) *Metrics {
 	reg := prometheus.NewRegistry()
 
 	m := &Metrics{
 		Registry: reg,
+		InstanceInfo: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name:        "trustmate_instance_info",
+			Help:        "Always 1; labeled with the configured instance name.",
+			ConstLabels: prometheus.Labels{"instance": instanceName},
+		}),
 		CertificatesIssuedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "trustmate_certificates_issued_total",
 			Help: "Total number of leaf certificates issued, by profile.",
@@ -66,6 +77,7 @@ func NewMetrics() *Metrics {
 	}
 
 	reg.MustRegister(
+		m.InstanceInfo,
 		m.CertificatesIssuedTotal,
 		m.CertificatesRevokedTotal,
 		m.OCSPRequestsTotal,
@@ -76,5 +88,6 @@ func NewMetrics() *Metrics {
 		m.ACMEAccountsTotal,
 		m.ACMEOrdersTotal,
 	)
+	m.InstanceInfo.Set(1)
 	return m
 }

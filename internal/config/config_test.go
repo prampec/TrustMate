@@ -223,6 +223,44 @@ func TestApplyEnvOverridesPrecedence(t *testing.T) {
 	}
 }
 
+func TestDefaultInstanceNameDerivesCommonNames(t *testing.T) {
+	cfg := Defaults()
+	if cfg.InstanceName != "TrustMate" {
+		t.Errorf("InstanceName = %q, want TrustMate", cfg.InstanceName)
+	}
+	if got, want := cfg.RootCommonName(), "TrustMate Root CA"; got != want {
+		t.Errorf("RootCommonName() = %q, want %q", got, want)
+	}
+	if got, want := cfg.IntermediateCommonName(), "TrustMate Intermediate CA"; got != want {
+		t.Errorf("IntermediateCommonName() = %q, want %q", got, want)
+	}
+	if got, want := cfg.AdminCommonName(), "TrustMate Admin Access"; got != want {
+		t.Errorf("AdminCommonName() = %q, want %q", got, want)
+	}
+	if got, want := cfg.ServerCommonName(), "TrustMate REST API"; got != want {
+		t.Errorf("ServerCommonName() = %q, want %q", got, want)
+	}
+	if got, want := cfg.TSACommonName(), "TrustMate TSA"; got != want {
+		t.Errorf("TSACommonName() = %q, want %q", got, want)
+	}
+}
+
+func TestApplyEnvOverridesInstanceName(t *testing.T) {
+	cfg := Defaults()
+	t.Setenv("TRUSTMATE_INSTANCE_NAME", "Example Corp CA")
+	ApplyEnvOverrides(&cfg)
+
+	if cfg.InstanceName != "Example Corp CA" {
+		t.Errorf("InstanceName = %q, want Example Corp CA", cfg.InstanceName)
+	}
+	if got, want := cfg.RootCommonName(), "Example Corp CA Root CA"; got != want {
+		t.Errorf("RootCommonName() = %q, want %q", got, want)
+	}
+	if got, want := cfg.TSACommonName(), "Example Corp CA TSA"; got != want {
+		t.Errorf("TSACommonName() = %q, want %q", got, want)
+	}
+}
+
 func TestApplyEnvOverridesTLSSANs(t *testing.T) {
 	cfg := Defaults()
 	t.Setenv("TRUSTMATE_TLS_SANS", "api.example.com, api2.example.com ,")

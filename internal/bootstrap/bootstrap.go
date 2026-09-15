@@ -159,7 +159,7 @@ func generateRoot(ctx context.Context, cfg config.Config, st store.Store, ks key
 
 	now := time.Now()
 	cert, err := pki.SelfSignedCA(pki.CertRequest{
-		Subject:   pkix.Name{CommonName: cfg.Bootstrap.RootCommonName},
+		Subject:   pkix.Name{CommonName: cfg.RootCommonName()},
 		NotBefore: now,
 		NotAfter:  now.Add(cfg.Bootstrap.RootValidity),
 		IsCA:      true,
@@ -182,7 +182,7 @@ func generateIntermediate(ctx context.Context, cfg config.Config, st store.Store
 	}
 
 	req := pki.CertRequest{
-		Subject:      pkix.Name{CommonName: cfg.Bootstrap.IntermediateCommonName},
+		Subject:      pkix.Name{CommonName: cfg.IntermediateCommonName()},
 		PublicKey:    signer.Public(),
 		NotBefore:    time.Now(),
 		NotAfter:     time.Now().Add(cfg.Bootstrap.IntermediateValidity),
@@ -224,7 +224,7 @@ func generateAdminLeaf(ctx context.Context, cfg config.Config, st store.Store, i
 
 	profile := profiles.Default().WithIssuerURLs(cfg.Server.PublicBaseURL, cfg.Modules.Revocation)
 	now := time.Now()
-	cert, err := pki.IssueLeaf(profile, pkix.Name{CommonName: cfg.Bootstrap.AdminCommonName}, key.Public(),
+	cert, err := pki.IssueLeaf(profile, pkix.Name{CommonName: cfg.AdminCommonName()}, key.Public(),
 		inter, now, now.Add(cfg.Bootstrap.AdminValidity), nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("bootstrap: issuing admin certificate: %w", err)
@@ -244,7 +244,7 @@ func generateServerTLSLeaf(ctx context.Context, cfg config.Config, st store.Stor
 
 	profile := profiles.ServerTLS().WithIssuerURLs(cfg.Server.PublicBaseURL, cfg.Modules.Revocation)
 	now := time.Now()
-	cert, err := pki.IssueLeaf(profile, pkix.Name{CommonName: cfg.Bootstrap.ServerCommonName}, signer.Public(),
+	cert, err := pki.IssueLeaf(profile, pkix.Name{CommonName: cfg.ServerCommonName()}, signer.Public(),
 		inter, now, now.Add(cfg.Bootstrap.ServerValidity), cfg.Server.TLSSANs)
 	if err != nil {
 		return pki.Issuer{}, fmt.Errorf("bootstrap: issuing server-tls certificate: %w", err)
@@ -263,7 +263,7 @@ func generateServerTLSLeaf(ctx context.Context, cfg config.Config, st store.Stor
 // so there's exactly one place that decides how a TSA identity is built.
 func generateTSALeaf(ctx context.Context, cfg config.Config, st store.Store, ks keystore.KeyStore, inter pki.Issuer) (pki.Issuer, error) {
 	issuer, _, err := tsa.IssueIdentity(ctx, refTSA, tsa.IdentityParams{
-		CommonName:        cfg.Bootstrap.TSACommonName,
+		CommonName:        cfg.TSACommonName(),
 		Validity:          cfg.Bootstrap.TSAValidity,
 		PublicBaseURL:     cfg.Server.PublicBaseURL,
 		RevocationEnabled: cfg.Modules.Revocation,

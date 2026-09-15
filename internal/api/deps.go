@@ -20,6 +20,12 @@ type Deps struct {
 	Logger *slog.Logger
 	Store  store.Store
 
+	// InstanceName identifies this deployment -- surfaced in /healthz and
+	// /readyz responses so an operator curling one of several replicas
+	// (or instances) can tell which one answered. Empty in tests that
+	// don't care about it.
+	InstanceName string
+
 	// IntermediateIssuer signs every leaf certificate issued via
 	// POST /v1/certificates, POST /v1/clients, and POST /v1/tsa/rotate.
 	IntermediateIssuer pki.Issuer
@@ -32,8 +38,9 @@ type Deps struct {
 	KeyStore keystore.KeyStore
 	// TSACommonName and TSAValidity are the identity template a rotated
 	// TSA certificate is issued against -- the same values the first-ever
-	// TSA identity used at bootstrap (cfg.Bootstrap.TSACommonName/
-	// TSAValidity), so rotation mints a like-for-like replacement.
+	// TSA identity used at bootstrap (cfg.TSACommonName()/
+	// cfg.Bootstrap.TSAValidity), so rotation mints a like-for-like
+	// replacement.
 	TSACommonName string
 	TSAValidity   time.Duration
 

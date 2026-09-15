@@ -18,26 +18,39 @@ construction (a single static binary depending on nothing beyond the Go
 runtime and OS libraries at build time), and modular — CA/revocation/TSA
 are independently enabled or disabled via config.
 
-## Quick start (development)
+## Quick start
+
+The bundled `compose.yml` is the fastest way to run TrustMate — it builds
+the scratch-based image from `Dockerfile` and starts `trustmated` with a
+persistent data volume:
 
 ```sh
-export TRUSTMATE_KEK=some-local-dev-passphrase   # encrypts the keystore at rest
-go build ./...
-go run ./cmd/trustmated
+export TRUSTMATE_KEK=some-strong-passphrase   # encrypts the keystore at rest
+docker compose up --build
+# (or: podman compose up --build)
 ```
 
-On first run, trustmated generates a root CA, an intermediate CA, an
-admin REST access certificate, and the server's own TLS certificate (see
-[`docs/design.md`](docs/design.md)'s Phase 0 entry). The root/intermediate/
-server-tls private keys are kept encrypted at rest under the keystore
-directory; the admin certificate and its **unencrypted** private key are
-written once to the bootstrap output directory (`./data/bootstrap/` by
-default) for the operator to retrieve and move off-host — `admin-key.pem`
-is sensitive and not meant to stay there. Restarting with existing CA
-material is a no-op (bootstrap is idempotent).
+Edit `compose.yml`'s `environment:` block to change the listen address,
+TLS SANs, public base URL, and so on — see
+[Environment configuration](docs/environment.md) for what each variable
+does. Prefer building and running the Go binary directly? See
+[Development](#development).
 
-Environment variables (all optional; env always overrides a config file,
-set via `TRUSTMATE_CONFIG_FILE`):
+On first run (containerized or not), trustmated generates a root CA, an
+intermediate CA, an admin REST access certificate, and the server's own
+TLS certificate (see [`docs/design.md`](docs/design.md)'s Phase 0 entry).
+The root/intermediate/server-tls private keys are kept encrypted at rest
+under the keystore directory; the admin certificate and its
+**unencrypted** private key are written once to the bootstrap output
+directory (`./data/bootstrap/` by default, or `./bootstrap/` on the host
+when using `compose.yml`) for the operator to retrieve and move off-host
+— `admin-key.pem` is sensitive and not meant to stay there. Restarting
+with existing CA material is a no-op (bootstrap is idempotent).
+
+### Common configuration
+
+A handful of environment variables cover required and everyday setup.
+Env always overrides a config file, set via `TRUSTMATE_CONFIG_FILE`:
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -46,23 +59,17 @@ set via `TRUSTMATE_CONFIG_FILE`):
 | `TRUSTMATE_TLS_SANS` | `localhost` | comma-separated SANs for the server TLS certificate |
 | `TRUSTMATE_PUBLIC_BASE_URL` | `https://localhost:8080` | this deployment's externally reachable origin, templated into AIA/CDP/OCSP certificate extensions at issuance time |
 | `TRUSTMATE_LOG_LEVEL` | `INFO` | `DEBUG`/`INFO`/`WARN`/`ERROR` |
-| `TRUSTMATE_ENABLE_REVOCATION` | `true` | toggle CRL/OCSP module |
-| `TRUSTMATE_ENABLE_TSA` | `true` | toggle RFC 3161 TSA module |
-| `TRUSTMATE_ENABLE_ACME` | `false` | toggle RFC 8555 ACME enrollment module |
-| `TRUSTMATE_STORE_DRIVER` | `sqlite` | `sqlite` or `postgres` — see [HA/clustering](#haclustering) |
-| `TRUSTMATE_STORE_DSN` | `./data/trustmate.db` | datastore path (sqlite) or connection string (postgres) |
-| `TRUSTMATE_KEYSTORE_DRIVER` | `file` | `file`, `vault`, or `pkcs11` (pkcs11 only in a `-tags pkcs11` build) — see [Pluggable keystores](#pluggable-keystores) |
-| `TRUSTMATE_KEYSTORE_DIR` | `./data/keys` | encrypted private key storage directory (file driver) |
-| `TRUSTMATE_KEK` | *(required for the file driver)* | keystore encryption passphrase (or use `TRUSTMATE_KEK_FILE` to read it from a mounted secret file) |
-| `TRUSTMATE_VAULT_ADDR` | *(none)* | Vault address (vault driver) |
-| `TRUSTMATE_VAULT_TRANSIT_MOUNT` | `transit` | Vault Transit secrets engine mount path (vault driver) |
-| `TRUSTMATE_VAULT_TOKEN` | *(required for the vault driver)* | Vault auth token (or use `TRUSTMATE_VAULT_TOKEN_FILE`) |
-| `TRUSTMATE_PKCS11_MODULE_PATH` | *(none)* | path to the vendor's PKCS#11 `.so` (pkcs11 driver) |
-| `TRUSTMATE_PKCS11_TOKEN_LABEL` | *(none)* | PKCS#11 token label (pkcs11 driver; mutually exclusive with `TRUSTMATE_PKCS11_SLOT_NUMBER`) |
-| `TRUSTMATE_PKCS11_SLOT_NUMBER` | *(none)* | select the PKCS#11 token by slot instead of label (pkcs11 driver) |
-| `TRUSTMATE_PKCS11_PIN` | *(required for the pkcs11 driver)* | PKCS#11 token PIN (or use `TRUSTMATE_PKCS11_PIN_FILE`) |
-| `TRUSTMATE_BOOTSTRAP_OUTPUT_DIR` | `./data/bootstrap` | where first-run cert/key material is written |
-| `TRUSTMATE_PROFILES_DIR` | *(none)* | directory of extra profile definitions (YAML), loaded alongside the built-ins |
+| `TRUSTMATE_ENABLE_REVOCATION` | `true` | toggle the CRL/OCSP module — TrustMate is modular; each `ENABLE_*` flag independently turns a subsystem's routes (and, for revocation, certificate extensions) on or off |
+| `TRUSTMATE_ENABLE_TSA` | `true` | toggle the RFC 3161 TSA module |
+| `TRUSTMATE_ENABLE_ACME` | `false` | toggle the RFC 8555 ACME enrollment module |
+| `TRUSTMATE_KEK` | *(required for the default `file` keystore driver)* | keystore encryption passphrase (or use `TRUSTMATE_KEK_FILE` to read it from a mounted secret file) |
+| `TRUSTMATE_INSTANCE_NAME` | `TrustMate` | this deployment's name — seeds the Common Name of every certificate generated at bootstrap (e.g. `"Example Corp"` → `"Example Corp Root CA"`) and shows up in startup logs, `/healthz`, `/readyz`, and the `trustmate_instance_info` metric, so you can tell instances apart |
+
+`TRUSTMATE_INSTANCE_NAME` only affects certificates generated during
+bootstrap — set it before the first run. For everything else —
+datastore/keystore driver selection (sqlite vs. postgres, file vs. Vault
+vs. PKCS#11), profile loading, operator CLI defaults, and full detail on
+every variable above — see [`docs/environment.md`](docs/environment.md).
 
 Health/ops endpoints: `GET /healthz`, `GET /readyz`, `GET /metrics` (real
 Prometheus exposition text as of Phase 3; all served over HTTPS, like
@@ -205,8 +212,39 @@ internal/keystore/       pluggable private key storage: file (default), vault, p
 internal/store/          issued-cert ledger, profiles, roles, audit log, ACME state (sqlite, postgres)
 internal/observability/  structured logging + Prometheus metrics
 docs/design.md           full product design
+docs/environment.md      full TRUSTMATE_* environment variable reference
 Dockerfile.pkcs11        opt-in cgo build variant for the pkcs11 keystore driver
 ```
+
+## Development
+
+Running the binary directly, without a container, is the fastest loop
+for iterating on the code:
+
+```sh
+export TRUSTMATE_KEK=some-local-dev-passphrase   # encrypts the keystore at rest
+go build ./...
+go run ./cmd/trustmated
+```
+
+This bootstraps the same first-run CA material described in
+[Quick start](#quick-start) directly under `./data/`. To build the
+`pkcs11` keystore driver, use `Dockerfile.pkcs11` or
+`go build -tags pkcs11 ./...` with the vendor's PKCS#11 headers/lib
+available.
+
+Before considering a change complete, run:
+
+```sh
+go build ./...
+go test ./...
+go vet ./...
+gofmt -l .        # should print nothing; run `gofmt -w .` to fix
+```
+
+See [`AGENTS.md`](AGENTS.md) for the full contributor conventions (commit
+style, code style, security notes for `internal/keystore`/`internal/pki`
+changes).
 
 ## License
 
