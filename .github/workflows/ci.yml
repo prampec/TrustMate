@@ -65,6 +65,18 @@ jobs:
           go-version: "1.26"
       - name: Install SoftHSM2
         run: sudo apt-get update && sudo apt-get install -y softhsm2
+      - name: Configure a user-writable SoftHSM2 token directory
+        # The apt package's default token dir (/var/lib/softhsm/tokens)
+        # is owned by root:softhsm, and the runner user's membership in
+        # the softhsm group (added by the postinst script) doesn't take
+        # effect until a new login session -- so init-token below would
+        # fail with a permission error. Point SOFTHSM2_CONF at a token
+        # dir the runner user owns instead of fighting group membership.
+        run: |
+          mkdir -p "$HOME/softhsm2/tokens"
+          printf 'directories.tokendir = %s\nobjectstore.backend = file\nlog.level = INFO\n' \
+            "$HOME/softhsm2/tokens" > "$HOME/softhsm2/softhsm2.conf"
+          echo "SOFTHSM2_CONF=$HOME/softhsm2/softhsm2.conf" >> "$GITHUB_ENV"
       - name: Initialize a SoftHSM2 token
         run: |
           softhsm2-util --init-token --free --label trustmate-ci \
