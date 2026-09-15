@@ -1,0 +1,28 @@
+meta {
+  name: POST /v1/ocsp (revoked cert -> revoked)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v1/ocsp
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(generated/ocsp-req-revoked.der) @contentType(application/ocsp-request)
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Generated fixture, built from the cert issued in
+  05-certificates/issue-for-revocation.bru and revoked in
+  05-certificates/revoke-certificate.bru. This is the scenario the original
+  field test (docs/field-test-report.md, pre-Phase-3) explicitly could not
+  exercise -- there was no revoke endpoint yet, so CRL/OCSP could only ever
+  report "good" or "unknown".
+}

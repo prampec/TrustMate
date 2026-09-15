@@ -1,0 +1,28 @@
+meta {
+  name: POST /v1/ocsp (never-issued serial -> good=unknown)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/ocsp
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(fixtures/ocsp-req-unknown.der) @contentType(application/ocsp-request)
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Static fixture (docs/bruno/fixtures/ocsp-req-unknown.der), built against
+  a fabricated serial under the sandbox's real intermediate CA issuer
+  (work/intermediate.pem is stable across runs). RFC 6960: an unrecognized
+  serial is CertStatus "unknown", distinct from "revoked". Verify:
+    openssl ocsp -issuer work/intermediate.pem -serial 0x1234567890ABCDEF1234567890ABCDEF12345678 \
+      -respin <response body> -text -no_nonce
+}

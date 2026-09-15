@@ -1,0 +1,30 @@
+meta {
+  name: GET /v1/profiles (no client cert -> 401)
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/profiles
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 401
+  res.body.error: client certificate required
+}
+
+docs {
+  Run ONLY this request with an override so bruno.json's clientCertificates
+  domain match fails and no client cert is attached:
+
+    bru run 10-auth/no-client-cert.bru --env sandbox \
+      --env-var baseUrl=https://test.me:8182 \
+      --env-var certDomain=unused.invalid \
+      --cacert ../../work/root.pem
+
+  Running it inside a normal recursive `bru run -r .` would still attach
+  the admin cert (certDomain defaults to a substring of every real host
+  this collection targets) and this assert would fail with 200 instead.
+}

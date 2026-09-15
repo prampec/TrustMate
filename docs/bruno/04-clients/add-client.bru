@@ -1,0 +1,42 @@
+meta {
+  name: POST /v1/clients (role=manager)
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{baseUrl}}/v1/clients
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "csr": {{csrManagerClient}},
+    "role": "manager"
+  }
+}
+
+assert {
+  res.status: 201
+}
+
+vars:post-response {
+  managerSerial: res.body.serial
+  managerPem: res.body.pem
+}
+
+docs {
+  Requires admin role. Issues a new API client cert against the built-in
+  client-auth profile and assigns it a role in one step. {{csrManagerClient}}
+  is injected via --env-var by scripts/run-all.sh (JSON-escaped PEM of
+  generated/manager-client.csr) -- see docs/bruno/README.md.
+
+  The resulting cert+key (generated/manager-client.pem +
+  generated/manager-client-key.pem) is reused in 10-auth/ to prove the RBAC
+  boundary: manager can issue certificates but not manage clients.
+}

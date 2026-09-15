@@ -1,0 +1,21 @@
+meta {
+  name: GET /v1/certificates/{serial}
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/certificates/{{goodSerial}}
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+  res.body.serial: {{goodSerial}}
+}
+
+docs {
+  Looks up the certificate issued by issue-good.bru via the runtime
+  {{goodSerial}} variable it captured.
+}

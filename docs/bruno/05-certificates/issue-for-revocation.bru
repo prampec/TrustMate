@@ -1,0 +1,37 @@
+meta {
+  name: POST /v1/certificates (second cert, for revocation demo)
+  type: http
+  seq: 9
+}
+
+post {
+  url: {{baseUrl}}/v1/certificates
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "profile": "document-signing",
+    "csr": {{csrRevokeMe}}
+  }
+}
+
+assert {
+  res.status: 201
+}
+
+vars:post-response {
+  revokeSerial: res.body.serial
+  revokePem: res.body.pem
+}
+
+docs {
+  Issues a second, disposable document-signing cert whose sole purpose is
+  to be revoked below, so 07-revocation/ocsp-revoked.bru and the CRL can
+  demonstrate the "revoked" state that didn't exist before Phase 3.
+}

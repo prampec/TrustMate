@@ -1,0 +1,22 @@
+meta {
+  name: POST /v1/profiles/reload
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/profiles/reload
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Requires admin role. Re-scans TRUSTMATE_PROFILES_DIR without a restart and
+  writes a "profiles-reload" audit entry. Returns {"profiles": [...]}; on
+  this sandbox TRUSTMATE_PROFILES_DIR isn't set, so the built-ins are all
+  that come back.
+}

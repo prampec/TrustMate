@@ -1,0 +1,16 @@
+{
+  "version": "1",
+  "name": "TrustMate Field Test",
+  "type": "collection",
+  "ignore": ["node_modules", ".git", "generated"],
+  "clientCertificates": {
+    "certs": [
+      {
+        "domain": "*{{certDomain}}*",
+        "type": "cert",
+        "certFilePath": "{{certFile}}",
+        "keyFilePath": "{{certKeyFile}}"
+      }
+    ]
+  }
+}

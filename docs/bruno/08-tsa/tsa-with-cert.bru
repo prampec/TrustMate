@@ -1,0 +1,24 @@
+meta {
+  name: POST /v1/tsa (certReq=true, embeds signer chain)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/tsa
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(fixtures/ts-req-with-cert.der) @contentType(application/timestamp-query)
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Verify chain-of-trust end to end (paths relative to the repo root):
+    openssl ts -verify -in <response body> -data docs/bruno/fixtures/testfile.txt -CAfile work/root.pem
+}

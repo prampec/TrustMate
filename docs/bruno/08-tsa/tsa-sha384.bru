@@ -1,0 +1,19 @@
+meta {
+  name: POST /v1/tsa (SHA-384)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{baseUrl}}/v1/tsa
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(fixtures/ts-req-sha384.der) @contentType(application/timestamp-query)
+}
+
+assert {
+  res.status: 200
+}

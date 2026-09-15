@@ -30,3 +30,9 @@
 
 # Claude Code local settings
 .claude/
+
+# Bruno field-test collection: fixtures generated at run time
+# (dynamic serials, DER requests derived from them) -- not reproducible
+# across runs, never committed.
+/docs/bruno/generated/
+/docs/bruno/*.log

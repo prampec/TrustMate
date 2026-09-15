@@ -1,0 +1,21 @@
+meta {
+  name: GET /v1/crl/intermediate.crl
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/crl/intermediate.crl
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  No auth. Run this after 05-certificates so the CRL has at least one
+  entry (the cert revoked in revoke-certificate.bru). Verify offline with:
+    openssl crl -inform DER -in <response body> -noout -text
+}

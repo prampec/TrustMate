@@ -1,0 +1,28 @@
+meta {
+  name: POST /v1/tsa/rotate
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/v1/tsa/rotate
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+vars:post-response {
+  newTsaSerial: res.body.serial
+  previousTsaSerial: res.body.previous_serial
+}
+
+docs {
+  Requires admin role. Mints a new TSA signing identity and hot-swaps the
+  running responder to it immediately -- no restart. The previous identity
+  is left valid and unrevoked. Run tsa-sha256.bru again afterwards
+  (certReq=true) and check the embedded signer cert's serial now matches
+  {{newTsaSerial}}, not the original bootstrap TSA cert.
+}

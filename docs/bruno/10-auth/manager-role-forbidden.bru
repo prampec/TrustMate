@@ -1,0 +1,31 @@
+meta {
+  name: GET /v1/clients (manager cert -> 403, admin-only route)
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/clients
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 403
+  res.body.error: insufficient role
+}
+
+docs {
+  Same manager identity override as manager-role-allowed.bru:
+
+    bru run 10-auth/manager-role-forbidden.bru --env sandbox \
+      --env-var baseUrl=https://test.me:8182 \
+      --env-var certFile=generated/manager-client.pem \
+      --env-var certKeyFile=generated/manager-client-key.pem \
+      --cacert ../../work/root.pem
+
+  GET /v1/clients requires admin -- roleSatisfies() (internal/api/auth.go)
+  makes admin a strict superset of manager, never the reverse -- so a
+  manager-role cert must be rejected here. This is the concrete proof
+  behind the RBAC claim in README.md's route table.
+}

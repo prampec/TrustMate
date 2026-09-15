@@ -1,0 +1,31 @@
+meta {
+  name: POST /v1/certificates/{serial}/revoke
+  type: http
+  seq: 10
+}
+
+post {
+  url: {{baseUrl}}/v1/certificates/{{revokeSerial}}/revoke
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "reason": "keyCompromise"
+  }
+}
+
+assert {
+  res.status: 200
+  res.body.reason: keyCompromise
+}
+
+docs {
+  Requires manager (or admin) role. Invalidates the cached CRL immediately
+  and marks the serial revoked for the next OCSP query.
+}

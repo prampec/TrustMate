@@ -1,0 +1,27 @@
+meta {
+  name: POST /v1/certificates (unknown profile -> 400)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/certificates
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "profile": "not-a-real-profile",
+    "csr": "bogus"
+  }
+}
+
+assert {
+  res.status: 400
+  res.body.error: unknown profile
+}

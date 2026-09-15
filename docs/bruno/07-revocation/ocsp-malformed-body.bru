@@ -1,0 +1,24 @@
+meta {
+  name: POST /v1/ocsp (malformed body -> 400)
+  type: http
+  seq: 8
+}
+
+post {
+  url: {{baseUrl}}/v1/ocsp
+  body: text
+  auth: none
+}
+
+headers {
+  content-type: application/ocsp-request
+}
+
+body:text {
+  not a real ocsp request
+}
+
+assert {
+  res.status: 400
+  res.body.error: invalid OCSP request
+}

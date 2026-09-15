@@ -1,0 +1,26 @@
+meta {
+  name: POST /v1/certificates (missing csr -> 400)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/certificates
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "profile": "document-signing"
+  }
+}
+
+assert {
+  res.status: 400
+  res.body.error: profile and csr are required
+}

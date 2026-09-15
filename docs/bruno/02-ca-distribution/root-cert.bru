@@ -1,0 +1,19 @@
+meta {
+  name: GET /v1/ca/root.pem
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/ca/root.pem
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Root CA certificate, PEM, no auth (AIA caIssuers target for the intermediate).
+}

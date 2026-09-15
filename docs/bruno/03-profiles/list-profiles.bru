@@ -1,0 +1,20 @@
+meta {
+  name: GET /v1/profiles
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/profiles
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Requires manager (or admin) role via mTLS client cert -- see bruno.json's
+  clientCertificates config. Lists built-in and config-loaded profiles.
+}

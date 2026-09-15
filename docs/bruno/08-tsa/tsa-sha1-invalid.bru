@@ -1,0 +1,24 @@
+meta {
+  name: POST /v1/tsa (SHA-1 -> 400, explicitly banned)
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{baseUrl}}/v1/tsa
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(fixtures/ts-req-sha1-invalid.der) @contentType(application/timestamp-query)
+}
+
+assert {
+  res.status: 400
+  res.body.error: invalid timestamp request
+}
+
+docs {
+  internal/tsa/responder.go explicitly rejects SHA-1 message imprints.
+}

@@ -1,0 +1,32 @@
+meta {
+  name: POST /v1/certificates/{serial}/revoke (CA cert, not a leaf -> 400)
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{baseUrl}}/v1/certificates/{{intermediateSerial}}/revoke
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "reason": "unspecified"
+  }
+}
+
+assert {
+  res.status: 400
+  res.body.error: only leaf certificates can be revoked
+}
+
+docs {
+  {{intermediateSerial}} is the sandbox's intermediate CA serial, set once
+  in environments/sandbox.bru -- structural CA certs aren't revocable
+  through this route.
+}

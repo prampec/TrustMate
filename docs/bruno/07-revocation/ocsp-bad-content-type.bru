@@ -1,0 +1,20 @@
+meta {
+  name: POST /v1/ocsp (wrong Content-Type -> 400)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/v1/ocsp
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(fixtures/ocsp-req-unknown.der) @contentType(text/plain)
+}
+
+assert {
+  res.status: 400
+  res.body.error: unsupported content type
+}

@@ -1,0 +1,21 @@
+meta {
+  name: GET /metrics
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/metrics
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Real Prometheus exposition text as of Phase 3 (trustmate_certificates_issued_total,
+  trustmate_ocsp_request_duration_seconds, trustmate_tsa_request_duration_seconds,
+  trustmate_store_up, trustmate_instance_info, ...).
+}

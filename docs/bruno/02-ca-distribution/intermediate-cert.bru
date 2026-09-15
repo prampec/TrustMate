@@ -1,0 +1,20 @@
+meta {
+  name: GET /v1/ca/intermediate.pem
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/ca/intermediate.pem
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Intermediate CA certificate, PEM, no auth. Carries AIA (OCSP + caIssuers)
+  and a CDP pointing back at this instance's public base URL.
+}

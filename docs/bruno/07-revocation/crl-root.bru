@@ -1,0 +1,21 @@
+meta {
+  name: GET /v1/crl/root.crl
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/crl/root.crl
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Root CA's CRL -- lists any revoked intermediate certs. Always empty in a
+  single-intermediate deployment like this sandbox; this is what the
+  intermediate cert's own CDP points at.
+}

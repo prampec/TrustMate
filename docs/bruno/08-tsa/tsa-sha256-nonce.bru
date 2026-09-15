@@ -1,0 +1,26 @@
+meta {
+  name: POST /v1/tsa (SHA-256, with nonce)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/tsa
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(fixtures/ts-req-sha256-nonce.der) @contentType(application/timestamp-query)
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Verify the response echoes the same nonce as the request (paths
+  relative to the repo root):
+    openssl ts -query -in docs/bruno/fixtures/ts-req-sha256-nonce.der -text | grep -i nonce
+    openssl ts -reply -in <response body> -text | grep -i nonce
+}

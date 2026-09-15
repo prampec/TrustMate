@@ -1,0 +1,20 @@
+meta {
+  name: GET /v1/acme/directory
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/acme/directory
+  body: none
+  auth: none
+}
+
+docs {
+  TRUSTMATE_ENABLE_ACME=false on this sandbox (see README's ACME section),
+  so this and eab-token.bru currently get Go's plain-text 404 from
+  net/http.ServeMux, not the app's JSON error envelope -- expected, not a
+  bug. No assert block: the expected status depends on whether the
+  deployment under test has ACME enabled, so it's left for the runner to
+  read rather than asserted as a fixed 200 or 404.
+}

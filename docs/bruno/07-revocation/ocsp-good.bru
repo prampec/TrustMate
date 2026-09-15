@@ -1,0 +1,28 @@
+meta {
+  name: POST /v1/ocsp (issued, unrevoked cert -> good)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/v1/ocsp
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(generated/ocsp-req-good.der) @contentType(application/ocsp-request)
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Generated fixture (docs/bruno/generated/ocsp-req-good.der), built by
+  scripts/run-all.sh from the cert issued in 05-certificates/issue-good.bru
+  -- there is no way to know that serial ahead of time, so this file does
+  not exist until run-all.sh's post-issuance step runs. Run this request
+  (or the whole 07-revocation folder) as a separate `bru run` invocation
+  *after* 05-certificates, not together with it in one recursive run.
+}

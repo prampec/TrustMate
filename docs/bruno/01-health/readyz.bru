@@ -1,0 +1,19 @@
+meta {
+  name: GET /readyz
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/readyz
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Readiness probe -- fails (503) if the datastore is unreachable.
+}

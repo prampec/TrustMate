@@ -1,0 +1,25 @@
+meta {
+  name: POST /v1/certificates/{serial}/revoke (already revoked -> 409)
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{baseUrl}}/v1/certificates/{{revokeSerial}}/revoke
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "reason": "unspecified"
+  }
+}
+
+assert {
+  res.status: 409
+}

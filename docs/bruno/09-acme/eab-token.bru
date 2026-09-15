@@ -1,0 +1,31 @@
+meta {
+  name: POST /v1/acme/eab-tokens (role=manager)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/v1/acme/eab-tokens
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "role": "manager"
+  }
+}
+
+docs {
+  Requires admin role, and requires TRUSTMATE_ENABLE_ACME=true -- disabled
+  on this sandbox, so expect Go's plain 404 here too. Kept in the
+  collection (rather than deleted) so a future run against an
+  ACME-enabled deployment has a ready-made EAB-issuance request; a full
+  new-account -> new-order -> finalize -> certificate-download flow needs
+  RFC 8555 JWS signing, which is out of scope for a static Bruno request
+  and is intentionally not attempted here.
+}

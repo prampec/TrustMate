@@ -1,0 +1,24 @@
+meta {
+  name: POST /v1/certificates (malformed JSON -> 400)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v1/certificates
+  body: text
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:text {
+  {not json
+}
+
+assert {
+  res.status: 400
+  res.body.error: malformed JSON body
+}

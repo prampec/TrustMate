@@ -1,0 +1,15 @@
+meta {
+  name: GET /v1/certificates (wrong method -> 405)
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{baseUrl}}/v1/certificates
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 405
+}

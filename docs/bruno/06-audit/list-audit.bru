@@ -1,0 +1,22 @@
+meta {
+  name: GET /v1/audit?limit=20
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/v1/audit?limit=20
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Requires admin role. Issuance/revocation/config-change audit trail. Run
+  this folder after 03-profiles, 04-clients and 05-certificates so the
+  entries they generated (issue, revoke, client-issue, profiles-reload)
+  show up.
+}

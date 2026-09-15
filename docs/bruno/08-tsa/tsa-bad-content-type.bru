@@ -1,0 +1,20 @@
+meta {
+  name: POST /v1/tsa (wrong Content-Type -> 400)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/v1/tsa
+  body: file
+  auth: none
+}
+
+body:file {
+  file: @file(fixtures/ts-req-sha256.der) @contentType(text/plain)
+}
+
+assert {
+  res.status: 400
+  res.body.error: unsupported content type
+}

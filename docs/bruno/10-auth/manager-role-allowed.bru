@@ -1,0 +1,29 @@
+meta {
+  name: GET /v1/profiles (manager cert -> allowed)
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/v1/profiles
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: 200
+}
+
+docs {
+  Run with the manager-role client identity 04-clients/add-client.bru
+  minted (extracted by scripts/run-all.sh into docs/bruno/generated/):
+
+    bru run 10-auth/manager-role-allowed.bru --env sandbox \
+      --env-var baseUrl=https://test.me:8182 \
+      --env-var certFile=generated/manager-client.pem \
+      --env-var certKeyFile=generated/manager-client-key.pem \
+      --cacert ../../work/root.pem
+
+  GET /v1/profiles only requires manager (or admin) -- see
+  internal/api/router.go -- so this must succeed.
+}
