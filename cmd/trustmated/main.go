@@ -26,6 +26,7 @@ import (
 	"github.com/prampec/trustmate/internal/store/postgres"
 	"github.com/prampec/trustmate/internal/store/sqlite"
 	"github.com/prampec/trustmate/internal/tsa"
+	"github.com/prampec/trustmate/internal/version"
 )
 
 // openStore constructs the store.Store backend named by cfg.Driver.
@@ -83,6 +84,11 @@ func runBootstrap(ctx context.Context, logger *slog.Logger, cfg config.Config, d
 }
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-version") {
+		os.Stdout.WriteString("trustmated " + version.Version + "\n")
+		return
+	}
+
 	cfg, err := config.LoadFromEnv(os.Getenv("TRUSTMATE_CONFIG_FILE"))
 	if err != nil {
 		os.Stderr.WriteString("trustmate: loading config: " + err.Error() + "\n")

@@ -9,7 +9,8 @@
 FROM golang:1.26 AS build
 WORKDIR /src
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -tags pkcs11 -ldflags="-s -w" -o /out/trustmated ./cmd/trustmated
+ARG VERSION=dev
+RUN CGO_ENABLED=1 GOOS=linux go build -trimpath -tags pkcs11 -ldflags="-s -w -X github.com/prampec/trustmate/internal/version.Version=${VERSION}" -o /out/trustmated ./cmd/trustmated
 
 # Runtime stage -- a minimal glibc base, not scratch: the vendor's
 # PKCS#11 module is a dynamically loaded .so that needs a real libc

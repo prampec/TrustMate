@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"github.com/prampec/trustmate/internal/cliclient"
+	"github.com/prampec/trustmate/internal/version"
 )
 
 func main() {
@@ -30,6 +31,8 @@ func main() {
 		runAudit(os.Args[2:])
 	case "acme":
 		runACME(os.Args[2:])
+	case "version", "--version", "-version":
+		fmt.Println("trustmate-admin " + version.Version)
 	default:
 		usage()
 		os.Exit(2)
@@ -46,6 +49,7 @@ Usage:
   trustmate-admin clients list     [flags]
   trustmate-admin audit list       [--limit=N] [flags]
   trustmate-admin acme issue-eab-token --role=admin|manager [flags]
+  trustmate-admin version
 
 Flags (all connection flags default from TRUSTMATE_CLIENT_{SERVER,CERT,KEY,CA}):
   --server   TrustMate server base URL (default https://localhost:8080)

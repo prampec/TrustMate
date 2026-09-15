@@ -1,0 +1,103 @@
+name: Release
+
+# Triggered by pushing a semver tag, e.g.:
+#   git tag v0.1.0 && git push origin v0.1.0
+# Builds cross-platform binaries for trustmated/trustmate-admin/
+# trustmate-management, builds & pushes both Docker image variants to
+# GHCR, and publishes a GitHub Release with the binaries attached.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  binaries:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Build archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME}"
+          out="trustmate_${version}_${GOOS}_${GOARCH}"
+          mkdir -p "$out"
+          for cmd in trustmated trustmate-admin trustmate-management; do
+            go build -trimpath \
+              -ldflags="-s -w -X github.com/prampec/trustmate/internal/version.Version=${version}" \
+              -o "$out/${cmd}" "./cmd/${cmd}"
+          done
+          tar -czf "${out}.tar.gz" "$out"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: trustmate_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: trustmate_*.tar.gz
+          retention-days: 1
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push default image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          build-args: VERSION=${{ github.ref_name }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+      - name: Build and push pkcs11 image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.pkcs11
+          push: true
+          build-args: VERSION=${{ github.ref_name }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}-pkcs11
+            ghcr.io/${{ github.repository }}:latest-pkcs11
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [binaries, docker]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: trustmate_*
+          merge-multiple: true
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true

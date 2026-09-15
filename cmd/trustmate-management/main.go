@@ -19,6 +19,7 @@ import (
 	"os"
 
 	"github.com/prampec/trustmate/internal/cliclient"
+	"github.com/prampec/trustmate/internal/version"
 )
 
 func main() {
@@ -31,6 +32,8 @@ func main() {
 		runCertificates(os.Args[2:])
 	case "tsa":
 		runTSA(os.Args[2:])
+	case "version", "--version", "-version":
+		fmt.Println("trustmate-management " + version.Version)
 	default:
 		usage()
 		os.Exit(2)
@@ -45,6 +48,7 @@ Usage:
   trustmate-management certificates get     [flags] <serial>
   trustmate-management certificates revoke  [--reason=<reason>] [flags] <serial>
   trustmate-management tsa rotate           [flags]
+  trustmate-management version
 
 Flags must come before any positional argument (Go's flag package stops
 parsing at the first non-flag argument).

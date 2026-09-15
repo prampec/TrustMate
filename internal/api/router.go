@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/prampec/trustmate/internal/store"
+	"github.com/prampec/trustmate/internal/version"
 )
 
 // ModuleConfig controls which optional route groups are registered.
@@ -84,7 +85,7 @@ func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 
 func handleHealthz(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "instance": deps.InstanceName})
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "instance": deps.InstanceName, "version": version.Version})
 	}
 }
 
