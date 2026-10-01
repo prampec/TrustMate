@@ -29,6 +29,10 @@ jobs:
             goarch: amd64
           - goos: darwin
             goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -43,17 +47,26 @@ jobs:
           set -eu
           version="${GITHUB_REF_NAME}"
           out="trustmate_${version}_${GOOS}_${GOARCH}"
+          ext=""
+          if [ "$GOOS" = windows ]; then ext=".exe"; fi
           mkdir -p "$out"
           for cmd in trustmated trustmate-admin trustmate-management trustmate-mcp; do
             go build -trimpath \
               -ldflags="-s -w -X github.com/prampec/trustmate/internal/version.Version=${version}" \
-              -o "$out/${cmd}" "./cmd/${cmd}"
+              -o "$out/${cmd}${ext}" "./cmd/${cmd}"
           done
-          tar -czf "${out}.tar.gz" "$out"
+          # zip is the archive format Windows users and tooling expect.
+          if [ "$GOOS" = windows ]; then
+            zip -qr "${out}.zip" "$out"
+          else
+            tar -czf "${out}.tar.gz" "$out"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: trustmate_${{ matrix.goos }}_${{ matrix.goarch }}
-          path: trustmate_*.tar.gz
+          path: |
+            trustmate_*.tar.gz
+            trustmate_*.zip
           retention-days: 1
 
   docker:
@@ -102,5 +115,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
           generate_release_notes: true
