@@ -20,21 +20,35 @@ are independently enabled or disabled via config.
 
 ## Quick start
 
-The bundled `compose.yml` is the fastest way to run TrustMate — it builds
-the scratch-based image from `Dockerfile` and starts `trustmated` with a
-persistent data volume:
+The bundled `compose.yml` is the fastest way to run TrustMate — no build
+step, it pulls the published image
+([`ghcr.io/prampec/trustmate`](https://github.com/prampec/trustmate/pkgs/container/trustmate))
+and starts `trustmated` with a persistent data volume:
 
 ```sh
 export TRUSTMATE_KEK=some-strong-passphrase   # encrypts the keystore at rest
-docker compose up --build
-# (or: podman compose up --build)
+docker compose up
+# (or: podman compose up)
 ```
 
 Edit `compose.yml`'s `environment:` block to change the listen address,
 TLS SANs, public base URL, and so on — see
 [Environment configuration](docs/environment.md) for what each variable
-does. Prefer building and running the Go binary directly? See
-[Development](#development).
+does. Pin `image:` to a specific release (e.g.
+`ghcr.io/prampec/trustmate:v0.1.0`) instead of `:latest` for anything
+beyond a quick trial; `:latest-pkcs11`/`:vX.Y.Z-pkcs11` is the cgo build
+variant with the `pkcs11` keystore driver (see
+[Pluggable keystores](#pluggable-keystores)).
+
+Prefer building the image from source instead of pulling it? Use the
+`compose.build.yml` override, which builds `Dockerfile` locally:
+
+```sh
+docker compose -f compose.yml -f compose.build.yml up --build
+```
+
+Prefer building and running the Go binary directly instead of a
+container? See [Development](#development).
 
 On first run (containerized or not), trustmated generates a root CA, an
 intermediate CA, an admin REST access certificate, and the server's own

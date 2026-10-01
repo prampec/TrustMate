@@ -2,10 +2,7 @@ version: "3.9"
 
 services:
   trustmated:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: trustmate/trustmated:local
+    image: ghcr.io/prampec/trustmate:latest
     ports:
       - "8182:8182"
     userns_mode: "keep-id:uid=65532,gid=65532"

@@ -1,0 +1,11 @@
+version: "3.9"
+
+# Override for compose.yml that builds trustmated from source instead of
+# pulling the published ghcr.io image. Use it with:
+#   docker compose -f compose.yml -f compose.build.yml up --build
+services:
+  trustmated:
+    image: trustmate/trustmated:local
+    build:
+      context: .
+      dockerfile: Dockerfile
