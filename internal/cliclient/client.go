@@ -95,33 +95,18 @@ func (c *Client) Post(path string, body, out any) error {
 
 func (c *Client) do(method, path string, body, out any) error {
 	var reqBody io.Reader
+	contentType := ""
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("cliclient: encoding request body: %w", err)
 		}
 		reqBody = bytes.NewReader(data)
+		contentType = "application/json"
 	}
-	req, err := http.NewRequest(method, c.baseURL+path, reqBody)
+	data, err := c.doRaw(method, path, contentType, reqBody)
 	if err != nil {
-		return fmt.Errorf("cliclient: building request: %w", err)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("cliclient: request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("cliclient: reading response body: %w", err)
-	}
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("cliclient: server returned %s: %s", resp.Status, string(data))
+		return err
 	}
 	if out == nil || len(data) == 0 {
 		return nil
@@ -130,4 +115,41 @@ func (c *Client) do(method, path string, body, out any) error {
 		return fmt.Errorf("cliclient: decoding response body: %w", err)
 	}
 	return nil
+}
+
+// GetRaw issues a GET request and returns the response body as-is, for
+// the routes that serve PEM/DER rather than JSON (CA certificates, CRLs).
+func (c *Client) GetRaw(path string) ([]byte, error) {
+	return c.doRaw(http.MethodGet, path, "", nil)
+}
+
+// PostRaw issues a POST request with a non-JSON body (e.g. an RFC 3161
+// timestamp query) and returns the response body as-is.
+func (c *Client) PostRaw(path, contentType string, body []byte) ([]byte, error) {
+	return c.doRaw(http.MethodPost, path, contentType, bytes.NewReader(body))
+}
+
+func (c *Client) doRaw(method, path, contentType string, body io.Reader) ([]byte, error) {
+	req, err := http.NewRequest(method, c.baseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("cliclient: building request: %w", err)
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("cliclient: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("cliclient: reading response body: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("cliclient: server returned %s: %s", resp.Status, string(data))
+	}
+	return data, nil
 }

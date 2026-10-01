@@ -207,16 +207,80 @@ safely means resolving CRL/OCSP per-certificate by issuer generation, not
 just minting a new key — a bigger architecture change than TSA rotation
 needed, since a TSA cert only ever signs new timestamps.
 
+## MCP server for AI assistants
+
+`trustmate-mcp` is a local [Model Context Protocol](https://modelcontextprotocol.io)
+server (stdio) that lets an AI assistant such as Claude Code or Claude
+Desktop operate TrustMate through the REST API. It runs on your machine
+with the mTLS client certificate configured the same way as the operator
+CLIs. The assistant never sees the certificate, and it can only do what
+that certificate's role allows. **Use a manager-role certificate** (mint
+one with `trustmate-admin clients add --role=manager`) unless the
+assistant really needs admin tools.
+
+| Tool | Role | Notes |
+|---|---|---|
+| `get_health`, `get_ca_certificate`, `get_crl` | any | CRL is decoded (update times, revoked serials) |
+| `list_profiles`, `get_certificate` | manager | |
+| `list_clients`, `list_audit` | admin | |
+| `issue_certificate` | manager | generates the key pair locally; writes `<name>.key.pem` (0600) and `<name>.cert.pem` to `--output-dir`, or signs a supplied `csr_pem` |
+| `revoke_certificate` | manager | marked destructive |
+| `issue_client_certificate` | admin | marked destructive (grants API access) |
+| `reload_profiles`, `rotate_tsa` | admin | `rotate_tsa` marked destructive |
+| `timestamp_file` | any | sends only the file's SHA-256; writes `<name>.tsr` |
+
+Private keys never pass through the MCP channel; tools return file paths
+only. The assistant picks a base file name, not a path, and existing files
+are never overwritten. `--read-only` (or `TRUSTMATE_MCP_READ_ONLY=true`)
+registers only the tools that neither change server state nor write
+files.
+
+Claude Code:
+
+```sh
+claude mcp add trustmate \
+  -e TRUSTMATE_CLIENT_SERVER=https://ca.example.com:8080 \
+  -e TRUSTMATE_CLIENT_CERT=$HOME/.trustmate/manager.pem \
+  -e TRUSTMATE_CLIENT_KEY=$HOME/.trustmate/manager-key.pem \
+  -e TRUSTMATE_CLIENT_CA=$HOME/.trustmate/root.pem \
+  -e TRUSTMATE_MCP_OUTPUT_DIR=$HOME/.trustmate/issued \
+  -- trustmate-mcp
+```
+
+Claude Desktop (`claude_desktop_config.json`) or any other MCP client:
+
+```json
+{
+  "mcpServers": {
+    "trustmate": {
+      "command": "/usr/local/bin/trustmate-mcp",
+      "env": {
+        "TRUSTMATE_CLIENT_SERVER": "https://ca.example.com:8080",
+        "TRUSTMATE_CLIENT_CERT": "/home/me/.trustmate/manager.pem",
+        "TRUSTMATE_CLIENT_KEY": "/home/me/.trustmate/manager-key.pem",
+        "TRUSTMATE_CLIENT_CA": "/home/me/.trustmate/root.pem",
+        "TRUSTMATE_MCP_OUTPUT_DIR": "/home/me/.trustmate/issued"
+      }
+    }
+  }
+}
+```
+
+Set `TRUSTMATE_MCP_OUTPUT_DIR` explicitly. Otherwise it defaults to the
+process's working directory, which MCP clients often set to somewhere
+unhelpful.
+
 ## Layout
 
 ```
 cmd/trustmated/          service entrypoint
 cmd/trustmate-admin/     operator CLI: profiles, client roster, audit
 cmd/trustmate-management/ operator CLI: certificate issue/get/revoke
+cmd/trustmate-mcp/       local MCP (stdio) server exposing the REST API as AI-assistant tools
 internal/api/            REST surface + RBAC + health/metrics/logging
 internal/acme/           RFC 8555 JWS/JWK primitives (parsing, verification, thumbprints)
 internal/bootstrap/      first-run CA/admin/server-tls/tsa cert generation
-internal/cliclient/      shared mTLS REST client for both operator CLIs
+internal/cliclient/      shared mTLS REST client for the operator CLIs and trustmate-mcp
 internal/config/         configuration loading (YAML file + env overrides)
 internal/pki/            CA core: certificate issuance
 internal/revocation/     CRL + OCSP responder

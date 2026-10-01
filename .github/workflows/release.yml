@@ -3,7 +3,7 @@ name: Release
 # Triggered by pushing a semver tag, e.g.:
 #   git tag v0.1.0 && git push origin v0.1.0
 # Builds cross-platform binaries for trustmated/trustmate-admin/
-# trustmate-management, builds & pushes both Docker image variants to
+# trustmate-management/trustmate-mcp, builds & pushes both Docker image variants to
 # GHCR, and publishes a GitHub Release with the binaries attached.
 
 on:
@@ -44,7 +44,7 @@ jobs:
           version="${GITHUB_REF_NAME}"
           out="trustmate_${version}_${GOOS}_${GOARCH}"
           mkdir -p "$out"
-          for cmd in trustmated trustmate-admin trustmate-management; do
+          for cmd in trustmated trustmate-admin trustmate-management trustmate-mcp; do
             go build -trimpath \
               -ldflags="-s -w -X github.com/prampec/trustmate/internal/version.Version=${version}" \
               -o "$out/${cmd}" "./cmd/${cmd}"

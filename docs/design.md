@@ -213,6 +213,16 @@ sprawl"):
     and reuses the same issuance path (`issueLeafCertificate`) as
     `POST /v1/clients`. Enable/disable via config (`modules.acme`, off by
     default); when disabled, no `/v1/acme/*` routes are registered.
+11. **`mcp`** — `cmd/trustmate-mcp`, a local Model Context Protocol
+    server (stdio) that exposes the REST API as tools for AI assistants.
+    It is a third thin client over `internal/cliclient`, not a server-side
+    feature: the mTLS client certificate stays in the MCP process's local
+    configuration, so the server's auth model is unchanged and an
+    assistant can do exactly what that certificate's role allows. Keys for
+    certificates it issues are generated locally and written to a
+    configured output directory; only file paths travel over MCP. Tools
+    that change server state are annotated (`destructiveHint`) so clients
+    ask for confirmation, and `--read-only` drops them entirely.
 
 ## REST API sketch
 
@@ -279,6 +289,9 @@ server-issued signing identity — replaces the SignServer half.
 **Phase 3**: profile config (multiple profiles, not hardcoded), client access control with roles (available roles are hardcoded properties of the application)
 revocation via REST, audit log endpoint, `admin` and `management` CLI, `/metrics`,
 request-level auth (mTLS or bearer tokens).
+
+**Phase 3.5**: `trustmate-mcp` (module 11 above) — MCP bridge over the
+same REST endpoints the CLIs use. Implemented.
 
 **Phase 4**: storage interface's Postgres implementation (alongside
 SQLite), so the API layer can run as multiple stateless replicas behind a
