@@ -25,7 +25,7 @@ import (
 func main() {
 	if len(os.Args) < 2 {
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 	switch os.Args[1] {
 	case "certificates":
@@ -36,7 +36,7 @@ func main() {
 		fmt.Println("trustmate-management " + version.Version)
 	default:
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 }
 
@@ -68,13 +68,19 @@ Flags (all connection flags default from TRUSTMATE_CLIENT_{SERVER,CERT,KEY,CA}):
   --cert     client certificate PEM (role required depends on the command)
   --key      client private key PEM
   --ca       CA bundle PEM to verify the server
+
+Output: results are printed to stdout as JSON. On failure the exit code
+says what went wrong: 1 local or connection error, 2 invalid command
+line, 3 request rejected by the server (4xx), 4 server error (5xx). For
+codes 3 and 4 stderr holds the server's RFC 9457 problem document as a
+single JSON object.
 `)
 }
 
 func runCertificates(args []string) {
 	if len(args) < 1 {
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 	sub := args[0]
 	fs := flag.NewFlagSet("certificates "+sub, flag.ExitOnError)
@@ -92,7 +98,7 @@ func runCertificates(args []string) {
 	switch sub {
 	case "issue":
 		if *profile == "" || *csrPath == "" {
-			fatal(fmt.Errorf("--profile and --csr are required"))
+			fatalUsage("--profile and --csr are required")
 		}
 		csrPEM, err := os.ReadFile(*csrPath)
 		if err != nil {
@@ -110,7 +116,7 @@ func runCertificates(args []string) {
 		printJSON(out)
 	case "get":
 		if len(rest) != 1 {
-			fatal(fmt.Errorf("expected exactly one serial argument"))
+			fatalUsage("expected exactly one serial argument")
 		}
 		var out any
 		if err := client.Get("/v1/certificates/"+rest[0], &out); err != nil {
@@ -119,7 +125,7 @@ func runCertificates(args []string) {
 		printJSON(out)
 	case "revoke":
 		if len(rest) != 1 {
-			fatal(fmt.Errorf("expected exactly one serial argument"))
+			fatalUsage("expected exactly one serial argument")
 		}
 		var body any
 		if *reason != "" {
@@ -132,14 +138,14 @@ func runCertificates(args []string) {
 		printJSON(out)
 	default:
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 }
 
 func runTSA(args []string) {
 	if len(args) < 1 || args[0] != "rotate" {
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 	fs := flag.NewFlagSet("tsa rotate", flag.ExitOnError)
 	connFlags := cliclient.RegisterFlags(fs)
@@ -172,6 +178,10 @@ func printJSON(v any) {
 }
 
 func fatal(err error) {
-	fmt.Fprintln(os.Stderr, "trustmate-management:", err)
-	os.Exit(1)
+	cliclient.Fail("trustmate-management", err)
+}
+
+func fatalUsage(msg string) {
+	fmt.Fprintln(os.Stderr, "trustmate-management:", msg)
+	os.Exit(cliclient.ExitUsage)
 }

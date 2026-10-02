@@ -19,7 +19,7 @@ import (
 func main() {
 	if len(os.Args) < 2 {
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 
 	switch os.Args[1] {
@@ -35,7 +35,7 @@ func main() {
 		fmt.Println("trustmate-admin " + version.Version)
 	default:
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 }
 
@@ -56,13 +56,19 @@ Flags (all connection flags default from TRUSTMATE_CLIENT_{SERVER,CERT,KEY,CA}):
   --cert     client certificate PEM (must hold the admin role)
   --key      client private key PEM
   --ca       CA bundle PEM to verify the server
+
+Output: results are printed to stdout as JSON. On failure the exit code
+says what went wrong: 1 local or connection error, 2 invalid command
+line, 3 request rejected by the server (4xx), 4 server error (5xx). For
+codes 3 and 4 stderr holds the server's RFC 9457 problem document as a
+single JSON object.
 `)
 }
 
 func runProfiles(args []string) {
 	if len(args) < 1 {
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 	fs := flag.NewFlagSet("profiles "+args[0], flag.ExitOnError)
 	connFlags := cliclient.RegisterFlags(fs)
@@ -86,14 +92,14 @@ func runProfiles(args []string) {
 		printJSON(out)
 	default:
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 }
 
 func runClients(args []string) {
 	if len(args) < 1 {
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 	sub := args[0]
 	fs := flag.NewFlagSet("clients "+sub, flag.ExitOnError)
@@ -108,7 +114,7 @@ func runClients(args []string) {
 	switch sub {
 	case "add":
 		if *csrPath == "" || *role == "" {
-			fatal(fmt.Errorf("--csr and --role are required"))
+			fatalUsage("--csr and --role are required")
 		}
 		csrPEM, err := os.ReadFile(*csrPath)
 		if err != nil {
@@ -128,14 +134,14 @@ func runClients(args []string) {
 		printJSON(out)
 	default:
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 }
 
 func runAudit(args []string) {
 	if len(args) < 1 || args[0] != "list" {
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 	fs := flag.NewFlagSet("audit list", flag.ExitOnError)
 	connFlags := cliclient.RegisterFlags(fs)
@@ -163,7 +169,7 @@ func runAudit(args []string) {
 func runACME(args []string) {
 	if len(args) < 1 || args[0] != "issue-eab-token" {
 		usage()
-		os.Exit(2)
+		os.Exit(cliclient.ExitUsage)
 	}
 	fs := flag.NewFlagSet("acme issue-eab-token", flag.ExitOnError)
 	connFlags := cliclient.RegisterFlags(fs)
@@ -198,6 +204,10 @@ func printJSON(v any) {
 }
 
 func fatal(err error) {
-	fmt.Fprintln(os.Stderr, "trustmate-admin:", err)
-	os.Exit(1)
+	cliclient.Fail("trustmate-admin", err)
+}
+
+func fatalUsage(msg string) {
+	fmt.Fprintln(os.Stderr, "trustmate-admin:", msg)
+	os.Exit(cliclient.ExitUsage)
 }

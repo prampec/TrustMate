@@ -191,10 +191,27 @@ trustmate-admin audit list --limit=50
 trustmate-admin acme issue-eab-token --role=manager
 
 trustmate-management certificates issue --profile=document-signing --csr=leaf.csr
+trustmate-management certificates issue --profile=document-signing --csr=leaf.csr --dry-run
 trustmate-management certificates get <serial>
-trustmate-management certificates revoke <serial> --reason=keyCompromise
+trustmate-management certificates revoke --reason=keyCompromise <serial>
 trustmate-management tsa rotate
 ```
+
+Flags must come before positional arguments. Both CLIs print results to
+stdout as JSON, and their exit codes are stable so scripts and agents can
+branch on them:
+
+| Exit code | Meaning | stderr |
+|---|---|---|
+| 0 | success | empty |
+| 1 | local or connection error | `prog: message` |
+| 2 | invalid command line | usage or `prog: message` |
+| 3 | server rejected the request (4xx) | the server's RFC 9457 problem document, one JSON object |
+| 4 | server error (5xx) | the server's problem document |
+
+A route of a disabled module answers with a plain-text 404 rather than a
+problem document. That case still exits 3, with `prog: message` on
+stderr.
 
 `tsa rotate` mints a new TSA signing identity and switches the running
 server to it immediately — no restart needed, and the change is

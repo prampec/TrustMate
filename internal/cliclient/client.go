@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -149,7 +150,70 @@ func (c *Client) doRaw(method, path, contentType string, body io.Reader) ([]byte
 		return nil, fmt.Errorf("cliclient: reading response body: %w", err)
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("cliclient: server returned %s: %s", resp.Status, string(data))
+		return nil, &APIError{StatusCode: resp.StatusCode, Status: resp.Status, ContentType: resp.Header.Get("Content-Type"), Body: data}
 	}
 	return data, nil
+}
+
+// APIError is a non-2xx response from the server. Body is usually an RFC
+// 9457 problem document (application/problem+json); callers that want to
+// branch on its type can decode it with Problem.
+type APIError struct {
+	StatusCode  int
+	Status      string
+	ContentType string
+	Body        []byte
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("cliclient: server returned %s: %s", e.Status, strings.TrimSpace(string(e.Body)))
+}
+
+// Problem decodes Body as a problem document, or returns nil when the
+// server sent something else (e.g. a plain-text 404 for a disabled
+// module).
+func (e *APIError) Problem() map[string]any {
+	if !strings.HasPrefix(e.ContentType, "application/problem+json") {
+		return nil
+	}
+	var p map[string]any
+	if err := json.Unmarshal(e.Body, &p); err != nil {
+		return nil
+	}
+	return p
+}
+
+// Exit codes shared by the operator CLIs, so scripts and agents can tell
+// a request the server refused from a server or local failure without
+// parsing stderr.
+const (
+	ExitFailure  = 1 // local or connection failure
+	ExitUsage    = 2 // invalid command line
+	ExitRejected = 3 // server rejected the request (4xx)
+	ExitServer   = 4 // server failed (5xx)
+)
+
+// ExitCode maps err to one of the Exit* codes.
+func ExitCode(err error) int {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		return ExitFailure
+	}
+	if apiErr.StatusCode >= 500 {
+		return ExitServer
+	}
+	return ExitRejected
+}
+
+// Fail reports err on stderr and exits with ExitCode(err). A server
+// problem document is written as-is, one JSON object on its own, so it
+// can be parsed directly; anything else is written as "prog: message".
+func Fail(prog string, err error) {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Problem() != nil {
+		fmt.Fprintln(os.Stderr, strings.TrimSpace(string(apiErr.Body)))
+	} else {
+		fmt.Fprintln(os.Stderr, prog+":", err)
+	}
+	os.Exit(ExitCode(err))
 }
