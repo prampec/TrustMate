@@ -450,6 +450,8 @@ paths:
               schema: {type: string, format: binary}
         "400":
           $ref: "#/components/responses/Error"
+        "415":
+          $ref: "#/components/responses/Error"
 
   /v1/tsa:
     post:
@@ -469,6 +471,8 @@ paths:
             application/timestamp-reply:
               schema: {type: string, format: binary}
         "400":
+          $ref: "#/components/responses/Error"
+        "415":
           $ref: "#/components/responses/Error"
   /v1/tsa/rotate:
     post:

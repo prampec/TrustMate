@@ -33,7 +33,7 @@ var (
 	probNotFound                = problemType{"not-found", "Not found", http.StatusNotFound}
 	probProfileReloadFailed     = problemType{"profile-reload-failed", "Profile reload failed", http.StatusBadRequest}
 	probProfilesUnavailable     = problemType{"profile-registry-unavailable", "Profile registry not configured", http.StatusServiceUnavailable}
-	probUnsupportedMediaType    = problemType{"unsupported-media-type", "Unsupported content type", http.StatusBadRequest}
+	probUnsupportedMediaType    = problemType{"unsupported-media-type", "Unsupported content type", http.StatusUnsupportedMediaType}
 	probBodyUnreadable          = problemType{"body-unreadable", "Request body could not be read", http.StatusBadRequest}
 	probBodyTooLarge            = problemType{"body-too-large", "Request body too large", http.StatusBadRequest}
 	probInvalidOCSPRequest      = problemType{"invalid-ocsp-request", "Invalid OCSP request", http.StatusBadRequest}

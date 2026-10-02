@@ -1,5 +1,5 @@
 meta {
-  name: POST /v1/tsa (wrong Content-Type -> 400)
+  name: POST /v1/tsa (wrong Content-Type -> 415)
   type: http
   seq: 6
 }
@@ -15,6 +15,6 @@ body:file {
 }
 
 assert {
-  res.status: 400
+  res.status: 415
   res.body.type: urn:trustmate:problem:unsupported-media-type
 }

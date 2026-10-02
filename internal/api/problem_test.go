@@ -156,6 +156,9 @@ func TestProblemTSAUnsupportedContentType(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnsupportedMediaType)
+	}
 	body := decodeProblem(t, rec, "unsupported-media-type")
 	if body["expected_content_type"] != "application/timestamp-query" {
 		t.Errorf("expected_content_type = %v", body["expected_content_type"])
@@ -176,4 +179,22 @@ func TestProblemTSARejectsSHA1AsUnsupported(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	decodeProblem(t, rec, "unsupported-timestamp-request")
+}
+
+func TestProblemOCSPUnsupportedContentType(t *testing.T) {
+	deps := newTestDeps(t, ModuleConfig{EnableRevocation: true})
+	router := NewRouter(deps, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/ocsp", bytes.NewReader([]byte("x")))
+	req.Header.Set("Content-Type", "text/plain")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnsupportedMediaType)
+	}
+	body := decodeProblem(t, rec, "unsupported-media-type")
+	if body["expected_content_type"] != "application/ocsp-request" {
+		t.Errorf("expected_content_type = %v", body["expected_content_type"])
+	}
 }
