@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/prampec/trustmate/internal/pki"
@@ -125,6 +127,27 @@ func assignRoleOrRevoke(ctx context.Context, deps Deps, rec store.CertificateRec
 	return err
 }
 
+func sortedRevocationReasons() []string {
+	out := make([]string, 0, len(revocationReasons))
+	for r := range revocationReasons {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func profileNames(deps Deps) []string {
+	all := profiles.All()
+	if deps.Profiles != nil {
+		all = deps.Profiles.All()
+	}
+	names := make([]string, 0, len(all))
+	for _, p := range all {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
 type issueCertificateRequest struct {
 	Profile string `json:"profile"`
 	CSR     string `json:"csr"`
@@ -152,23 +175,30 @@ func handleIssueCertificate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req issueCertificateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "malformed JSON body")
+			writeProblem(w, probMalformedJSON, err.Error(), nil)
 			return
 		}
-		if req.Profile == "" || req.CSR == "" {
-			writeError(w, http.StatusBadRequest, "profile and csr are required")
+		var missing []string
+		if req.Profile == "" {
+			missing = append(missing, "profile")
+		}
+		if req.CSR == "" {
+			missing = append(missing, "csr")
+		}
+		if len(missing) > 0 {
+			writeProblem(w, probMissingField, strings.Join(missing, " and ")+" required", map[string]any{"missing_fields": missing})
 			return
 		}
 
 		profile, ok := lookupProfile(deps, req.Profile)
 		if !ok {
-			writeError(w, http.StatusBadRequest, "unknown profile")
+			writeProblem(w, probUnknownProfile, fmt.Sprintf("no profile named %q", req.Profile), map[string]any{"available_profiles": profileNames(deps)})
 			return
 		}
 
 		csr, err := pki.ParseCSR([]byte(req.CSR))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid CSR: "+err.Error())
+			writeProblem(w, probInvalidCSR, err.Error(), nil)
 			return
 		}
 
@@ -177,7 +207,7 @@ func handleIssueCertificate(deps Deps) http.HandlerFunc {
 		rec, err := issueLeafCertificate(r.Context(), deps, profile, csr.Subject, csr.PublicKey, csr.DNSNames, now, r.RemoteAddr, "issue", profile.Name)
 		if err != nil {
 			deps.Logger.Error("issuing certificate failed", "profile", profile.Name, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		// No role-assignment step on this route (unlike POST /v1/clients
@@ -213,12 +243,12 @@ func handleGetCertificate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rec, err := deps.Store.Certificates().GetBySerial(r.Context(), r.PathValue("serial"))
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not found")
+			writeProblem(w, probNotFound, "no certificate with this serial", nil)
 			return
 		}
 		if err != nil {
 			deps.Logger.Error("looking up certificate failed", "serial", r.PathValue("serial"), "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		writeJSON(w, http.StatusOK, certificateResponse{
@@ -258,7 +288,7 @@ func handleRevokeCertificate(deps Deps) http.HandlerFunc {
 		var req revokeCertificateRequest
 		if r.ContentLength != 0 {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeError(w, http.StatusBadRequest, "malformed JSON body")
+				writeProblem(w, probMalformedJSON, err.Error(), nil)
 				return
 			}
 		}
@@ -266,18 +296,18 @@ func handleRevokeCertificate(deps Deps) http.HandlerFunc {
 			req.Reason = "unspecified"
 		}
 		if !revocationReasons[req.Reason] {
-			writeError(w, http.StatusBadRequest, "unknown reason")
+			writeProblem(w, probUnknownRevocationReason, fmt.Sprintf("unknown revocation reason %q", req.Reason), map[string]any{"allowed_values": sortedRevocationReasons()})
 			return
 		}
 
 		rec, err := deps.Store.Certificates().GetBySerial(r.Context(), serial)
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "not found")
+			writeProblem(w, probNotFound, "no certificate with this serial", nil)
 			return
 		}
 		if err != nil {
 			deps.Logger.Error("looking up certificate failed", "serial", serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		// Root/intermediate CA certificates aren't revocable through this
@@ -285,19 +315,19 @@ func handleRevokeCertificate(deps Deps) http.HandlerFunc {
 		// operations, and nothing in the CRL/OCSP/issuance path checks
 		// whether the issuing CA itself is "revoked".
 		if rec.Kind != store.CertKindLeaf {
-			writeError(w, http.StatusBadRequest, "only leaf certificates can be revoked")
+			writeProblem(w, probNotRevocable, "only leaf certificates can be revoked; this is a "+string(rec.Kind)+" certificate", nil)
 			return
 		}
 
 		now := time.Now()
 		err = deps.Store.Certificates().Revoke(r.Context(), serial, req.Reason, now)
 		if errors.Is(err, store.ErrAlreadyRevoked) {
-			writeError(w, http.StatusConflict, "already revoked")
+			writeProblem(w, probAlreadyRevoked, "", map[string]any{"serial": serial})
 			return
 		}
 		if err != nil {
 			deps.Logger.Error("revoking certificate failed", "serial", serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 
@@ -309,7 +339,7 @@ func handleRevokeCertificate(deps Deps) http.HandlerFunc {
 			Detail:    req.Reason,
 		}); err != nil {
 			deps.Logger.Error("writing audit entry failed", "serial", serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		if deps.CRLBuilder != nil {

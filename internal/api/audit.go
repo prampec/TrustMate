@@ -28,7 +28,7 @@ func handleListAudit(deps Deps) http.HandlerFunc {
 		if v := r.URL.Query().Get("limit"); v != "" {
 			n, err := strconv.Atoi(v)
 			if err != nil || n <= 0 {
-				writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+				writeProblem(w, probInvalidParameter, "limit must be a positive integer", map[string]any{"parameter": "limit", "maximum": maxAuditLimit})
 				return
 			}
 			limit = n
@@ -40,7 +40,7 @@ func handleListAudit(deps Deps) http.HandlerFunc {
 		entries, err := deps.Store.Audit().List(r.Context(), limit)
 		if err != nil {
 			deps.Logger.Error("listing audit entries failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 

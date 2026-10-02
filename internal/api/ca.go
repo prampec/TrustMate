@@ -13,11 +13,11 @@ func handleCAPem(deps Deps, kind store.CertKind) http.HandlerFunc {
 		recs, err := deps.Store.Certificates().FindByKind(r.Context(), kind)
 		if err != nil {
 			deps.Logger.Error("finding CA certificate failed", "kind", kind, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		if len(recs) == 0 {
-			writeError(w, http.StatusNotFound, "not found")
+			writeProblem(w, probNotFound, "CA certificate "+string(kind)+" has not been bootstrapped", nil)
 			return
 		}
 		rec := recs[len(recs)-1]

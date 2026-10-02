@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -32,22 +33,22 @@ func handleIssueClient(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req issueClientRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "malformed JSON body")
+			writeProblem(w, probMalformedJSON, err.Error(), nil)
 			return
 		}
 		if req.CSR == "" {
-			writeError(w, http.StatusBadRequest, "csr is required")
+			writeProblem(w, probMissingField, "csr is required", map[string]any{"missing_fields": []string{"csr"}})
 			return
 		}
 		role := store.ClientRole(req.Role)
 		if role != store.RoleAdmin && role != store.RoleManager {
-			writeError(w, http.StatusBadRequest, "role must be \"admin\" or \"manager\"")
+			writeInvalidRole(w, req.Role)
 			return
 		}
 
 		csr, err := pki.ParseCSR([]byte(req.CSR))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid CSR: "+err.Error())
+			writeProblem(w, probInvalidCSR, err.Error(), nil)
 			return
 		}
 
@@ -56,12 +57,12 @@ func handleIssueClient(deps Deps) http.HandlerFunc {
 		rec, err := issueLeafCertificate(r.Context(), deps, profile, csr.Subject, csr.PublicKey, nil, now, r.RemoteAddr, "client-issue", string(role))
 		if err != nil {
 			deps.Logger.Error("issuing client certificate failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		if err := assignRoleOrRevoke(r.Context(), deps, rec, role, now); err != nil {
 			deps.Logger.Error("assigning client role failed", "serial", rec.Serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		// Only now, with the role assigned and the certificate confirmed
@@ -79,6 +80,10 @@ func handleIssueClient(deps Deps) http.HandlerFunc {
 	}
 }
 
+func writeInvalidRole(w http.ResponseWriter, got string) {
+	writeProblem(w, probInvalidRole, fmt.Sprintf("role must be \"admin\" or \"manager\", got %q", got), map[string]any{"allowed_values": []string{string(store.RoleAdmin), string(store.RoleManager)}})
+}
+
 type clientResponse struct {
 	Serial    string     `json:"serial"`
 	Role      string     `json:"role"`
@@ -93,7 +98,7 @@ func handleListClients(deps Deps) http.HandlerFunc {
 		roles, err := deps.Store.ClientRoles().List(r.Context())
 		if err != nil {
 			deps.Logger.Error("listing client roles failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 
@@ -102,7 +107,7 @@ func handleListClients(deps Deps) http.HandlerFunc {
 			certRec, err := deps.Store.Certificates().GetBySerial(r.Context(), roleRec.CertSerial)
 			if err != nil {
 				deps.Logger.Error("looking up client certificate failed", "serial", roleRec.CertSerial, "err", err)
-				writeError(w, http.StatusInternalServerError, "internal error")
+				writeInternalError(w)
 				return
 			}
 			out = append(out, clientResponse{

@@ -714,10 +714,10 @@ components:
 
   responses:
     Error:
-      description: Error.
+      description: RFC 9457 problem details. Branch on `type`; see the Problem schema for the catalogue.
       content:
-        application/json:
-          schema: {$ref: "#/components/schemas/Error"}
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
     ACMEProblem:
       description: RFC 8555 problem document; carries a Replay-Nonce header.
       content:
@@ -739,11 +739,83 @@ components:
           schema: {type: string}
 
   schemas:
-    Error:
+    Problem:
       type: object
-      required: [error]
+      description: |
+        RFC 9457 problem details. `type` is a stable identifier; `detail` is
+        human-readable and may change. Extension members give the data
+        needed to correct the request (allowed values, required role, ...).
+      required: [type, title, status]
       properties:
-        error: {type: string}
+        type:
+          type: string
+          enum:
+            - urn:trustmate:problem:malformed-json
+            - urn:trustmate:problem:missing-field
+            - urn:trustmate:problem:invalid-parameter
+            - urn:trustmate:problem:unknown-profile
+            - urn:trustmate:problem:invalid-csr
+            - urn:trustmate:problem:invalid-role
+            - urn:trustmate:problem:unknown-revocation-reason
+            - urn:trustmate:problem:not-revocable
+            - urn:trustmate:problem:already-revoked
+            - urn:trustmate:problem:not-found
+            - urn:trustmate:problem:profile-reload-failed
+            - urn:trustmate:problem:profile-registry-unavailable
+            - urn:trustmate:problem:unsupported-media-type
+            - urn:trustmate:problem:body-unreadable
+            - urn:trustmate:problem:body-too-large
+            - urn:trustmate:problem:invalid-ocsp-request
+            - urn:trustmate:problem:invalid-timestamp-request
+            - urn:trustmate:problem:unsupported-timestamp-request
+            - urn:trustmate:problem:client-certificate-required
+            - urn:trustmate:problem:client-certificate-not-authorized
+            - urn:trustmate:problem:client-certificate-revoked
+            - urn:trustmate:problem:insufficient-role
+            - urn:trustmate:problem:internal-error
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        available_profiles:
+          type: array
+          items: {type: string}
+          description: On `unknown-profile`.
+        missing_fields:
+          type: array
+          items: {type: string}
+          description: On `missing-field`.
+        allowed_values:
+          type: array
+          items: {type: string}
+          description: On `invalid-role` and `unknown-revocation-reason`.
+        required_role:
+          $ref: "#/components/schemas/Role"
+          description: On `insufficient-role` and `client-certificate-required`.
+        role:
+          $ref: "#/components/schemas/Role"
+          description: The caller's role, on `insufficient-role`.
+        client_serial:
+          $ref: "#/components/schemas/Serial"
+          description: The presented client certificate, on `client-certificate-not-authorized` and `client-certificate-revoked`.
+        serial:
+          $ref: "#/components/schemas/Serial"
+          description: On `already-revoked`.
+        parameter:
+          type: string
+          description: On `invalid-parameter`.
+        maximum:
+          type: integer
+          description: Upper bound of the parameter, on `invalid-parameter`.
+        expected_content_type:
+          type: string
+          description: On `unsupported-media-type`.
+        max_bytes:
+          type: integer
+          description: On `body-too-large`.
+        available:
+          type: array
+          items: {type: string}
+          description: Valid CRL file names, on `not-found` from `/v1/crl/{file}`.
     Serial:
       type: string
       pattern: "^[0-9]+$"

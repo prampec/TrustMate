@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -124,7 +125,10 @@ func (f *fakeCA) handler() http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req.Profile != "tls-server" {
 			w.WriteHeader(http.StatusBadRequest)
-			writeJSON(w, map[string]string{"error": "unknown profile"})
+			writeJSON(w, map[string]any{
+				"type": "urn:trustmate:problem:unknown-profile", "title": "Unknown certificate profile", "status": 400,
+				"detail": "no profile named " + strconv.Quote(req.Profile), "available_profiles": []string{"tls-server"},
+			})
 			return
 		}
 		serial, certPEM := f.sign(req.CSR)
@@ -358,8 +362,10 @@ func TestIssueCertificateWithCSR(t *testing.T) {
 func TestIssueCertificateServerError(t *testing.T) {
 	h := newHarness(t, false)
 	msg := h.call(t, "issue_certificate", map[string]any{"profile": "nope", "name": "x", "common_name": "x"}, nil)
-	if !strings.Contains(msg, "unknown profile") {
-		t.Errorf("error = %q, want server's message passed through", msg)
+	for _, want := range []string{"urn:trustmate:problem:unknown-profile", `"available_profiles":["tls-server"]`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error = %q, want server's problem document passed through (missing %s)", msg, want)
+		}
 	}
 	if entries, _ := os.ReadDir(h.outDir); len(entries) != 0 {
 		t.Errorf("files written despite server error: %v", entries)

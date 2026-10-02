@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -241,5 +242,55 @@ func TestLLMsTxtAbsentWhenDiscoveryDisabled(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+// TestOpenAPIProblemTypesMatchCatalogue reads problem.go's source for
+// the same reason registeredRoutes reads router.go: the catalogue is a
+// set of package vars, which Go can't enumerate at run time.
+func TestOpenAPIProblemTypesMatchCatalogue(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "problem.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parsing problem.go: %v", err)
+	}
+	var code []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok || len(lit.Elts) == 0 {
+			return true
+		}
+		if id, ok := lit.Type.(*ast.Ident); !ok || id.Name != "problemType" {
+			return true
+		}
+		slug, err := strconv.Unquote(lit.Elts[0].(*ast.BasicLit).Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code = append(code, problemTypePrefix+slug)
+		return true
+	})
+
+	var doc struct {
+		Components struct {
+			Schemas struct {
+				Problem struct {
+					Properties struct {
+						Type struct {
+							Enum []string `yaml:"enum"`
+						} `yaml:"type"`
+					} `yaml:"properties"`
+				} `yaml:"Problem"`
+			} `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	if err := yaml.Unmarshal(openAPISpec, &doc); err != nil {
+		t.Fatalf("parsing openapi.yaml: %v", err)
+	}
+	spec := doc.Components.Schemas.Problem.Properties.Type.Enum
+
+	sort.Strings(code)
+	sort.Strings(spec)
+	if len(code) == 0 || !slices.Equal(code, spec) {
+		t.Errorf("problem types differ\nproblem.go:   %v\nopenapi.yaml: %v", code, spec)
 	}
 }

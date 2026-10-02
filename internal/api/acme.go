@@ -107,7 +107,7 @@ func handleACMENewNonce(deps Deps) http.HandlerFunc {
 		nonce, err := deps.Store.ACMENonces().Issue(r.Context(), time.Now().Add(acmeNonceTTL))
 		if err != nil {
 			deps.Logger.Error("issuing acme nonce failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			acmeProblem(r.Context(), w, deps, http.StatusInternalServerError, "serverInternal", "internal error")
 			return
 		}
 		w.Header().Set("Replay-Nonce", nonce)
@@ -709,7 +709,7 @@ func handleIssueEABToken(deps Deps) http.HandlerFunc {
 		var req issueEABTokenRequest
 		if r.ContentLength != 0 {
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeError(w, http.StatusBadRequest, "malformed JSON body")
+				writeProblem(w, probMalformedJSON, err.Error(), nil)
 				return
 			}
 		}
@@ -718,19 +718,19 @@ func handleIssueEABToken(deps Deps) http.HandlerFunc {
 		}
 		role := store.ClientRole(req.Role)
 		if role != store.RoleAdmin && role != store.RoleManager {
-			writeError(w, http.StatusBadRequest, "role must be \"admin\" or \"manager\"")
+			writeInvalidRole(w, req.Role)
 			return
 		}
 
 		keyID, err := randomACMEID()
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		hmacKey := make([]byte, 32)
 		if _, err := rand.Read(hmacKey); err != nil {
 			deps.Logger.Error("generating acme eab hmac key failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 
@@ -744,7 +744,7 @@ func handleIssueEABToken(deps Deps) http.HandlerFunc {
 		}
 		if err := deps.Store.ACMEEABTokens().Create(r.Context(), rec); err != nil {
 			deps.Logger.Error("creating acme eab token failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		if err := deps.Store.Audit().Append(r.Context(), store.AuditEntry{

@@ -24,31 +24,36 @@ func handleTSA(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		if ct := r.Header.Get("Content-Type"); ct != "" && ct != "application/timestamp-query" {
-			writeError(w, http.StatusBadRequest, "unsupported content type")
+			writeProblem(w, probUnsupportedMediaType, "Content-Type must be application/timestamp-query", map[string]any{"expected_content_type": "application/timestamp-query"})
 			recordTSAMetrics(deps, "bad_request", start)
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxTSARequestBytes+1))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "reading request body failed")
+			writeProblem(w, probBodyUnreadable, "", nil)
 			recordTSAMetrics(deps, "bad_request", start)
 			return
 		}
 		if len(body) > maxTSARequestBytes {
-			writeError(w, http.StatusBadRequest, "request body too large")
+			writeProblem(w, probBodyTooLarge, "", map[string]any{"max_bytes": maxTSARequestBytes})
 			recordTSAMetrics(deps, "bad_request", start)
 			return
 		}
 
 		resp, err := deps.TSAResponder.Respond(r.Context(), body)
-		if errors.Is(err, tsa.ErrMalformedRequest) || errors.Is(err, tsa.ErrUnsupportedRequest) {
-			writeError(w, http.StatusBadRequest, "invalid timestamp request")
+		if errors.Is(err, tsa.ErrUnsupportedRequest) {
+			writeProblem(w, probUnsupportedTSARequest, "SHA-1 message imprints are not supported; use SHA-256 or stronger", nil)
+			recordTSAMetrics(deps, "bad_request", start)
+			return
+		}
+		if errors.Is(err, tsa.ErrMalformedRequest) {
+			writeProblem(w, probInvalidTSARequest, "body is not a DER-encoded RFC 3161 TimeStampReq", nil)
 			recordTSAMetrics(deps, "bad_request", start)
 			return
 		}
 		if err != nil {
 			deps.Logger.Error("TSA responder failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			recordTSAMetrics(deps, "error", start)
 			return
 		}
@@ -95,7 +100,7 @@ func handleRotateTSA(deps Deps) http.HandlerFunc {
 		ref, err := keystore.FreshRef(r.Context(), deps.KeyStore, "tsa")
 		if err != nil {
 			deps.Logger.Error("allocating TSA keystore ref failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 
@@ -107,7 +112,7 @@ func handleRotateTSA(deps Deps) http.HandlerFunc {
 		}, deps.Store, deps.KeyStore, deps.IntermediateIssuer)
 		if err != nil {
 			deps.Logger.Error("issuing rotated TSA identity failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 
@@ -121,7 +126,7 @@ func handleRotateTSA(deps Deps) http.HandlerFunc {
 			Detail:    "previous: " + previous.Cert.SerialNumber.String(),
 		}); err != nil {
 			deps.Logger.Error("writing audit entry failed", "serial", rec.Serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		if deps.Metrics != nil {

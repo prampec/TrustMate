@@ -7,7 +7,7 @@ Base URL: {{.BaseURL}}
 - Certificate properties (key usage, EKU, validity, AIA/CDP/OCSP) come from the named profile, not from the CSR. List profiles before you issue anything.
 - `admin` is a superset of `manager`. Each operation's required role is in the OpenAPI spec as `x-required-role`.
 - Revocation is irreversible. Revoking an API client's certificate also removes its API access.
-- Errors are JSON bodies of the form `{"error": "..."}`.{{if .ACME}} The ACME routes return RFC 8555 `application/problem+json` documents instead.{{end}}
+- Errors are RFC 9457 `application/problem+json` documents. Branch on the stable `type` URI (`urn:trustmate:problem:*`; the catalogue is the `Problem` schema in the OpenAPI spec). Extension members carry what you need to fix the request: `available_profiles`, `missing_fields`, `allowed_values`, `required_role`.{{if .ACME}} ACME routes use RFC 8555 `urn:ietf:params:acme:error:*` types.{{end}}
 - For an MCP client, the `trustmate-mcp` server wraps this API. It keeps private keys and the client certificate local: https://github.com/prampec/trustmate/blob/main/README.md#mcp-server-for-ai-assistants
 
 ## API

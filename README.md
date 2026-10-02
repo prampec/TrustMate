@@ -216,6 +216,24 @@ HTTP clients, SDK generators and AI agents can discover what the service
 offers. Each operation's `x-required-role` names the mTLS client role it
 needs.
 
+Errors are [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)
+`application/problem+json` documents. `type` is a stable
+`urn:trustmate:problem:*` identifier to branch on; the catalogue is the
+`Problem` schema in the spec. Where it helps to fix the request, extension
+members say what was expected:
+
+```json
+{
+  "type": "urn:trustmate:problem:unknown-profile",
+  "title": "Unknown certificate profile",
+  "status": 400,
+  "detail": "no profile named \"tls\"",
+  "available_profiles": ["default", "server-tls", "document-signing", "tsa"]
+}
+```
+
+ACME routes keep RFC 8555's own `urn:ietf:params:acme:error:*` types.
+
 For AI agents, [`llms.txt`](llms.txt) at the repository root summarizes
 the project ([llmstxt.org](https://llmstxt.org) format). A running
 instance also serves its own `GET /llms.txt`, which lists its public PKI

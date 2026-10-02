@@ -26,7 +26,7 @@ func handleCRL(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ca, ok := strings.CutSuffix(r.PathValue("ca"), ".crl")
 		if !ok {
-			writeError(w, http.StatusNotFound, "not found")
+			writeUnknownCRL(w)
 			return
 		}
 		var builder *revocation.CRLBuilder
@@ -36,13 +36,13 @@ func handleCRL(deps Deps) http.HandlerFunc {
 		case "root":
 			builder = deps.RootCRLBuilder
 		default:
-			writeError(w, http.StatusNotFound, "not found")
+			writeUnknownCRL(w)
 			return
 		}
 		der, err := builder.CRL(r.Context())
 		if err != nil {
 			deps.Logger.Error("generating CRL failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		w.Header().Set("Content-Type", "application/pkix-crl")
@@ -51,35 +51,39 @@ func handleCRL(deps Deps) http.HandlerFunc {
 	}
 }
 
+func writeUnknownCRL(w http.ResponseWriter) {
+	writeProblem(w, probNotFound, "unknown CRL", map[string]any{"available": []string{"root.crl", "intermediate.crl"}})
+}
+
 func handleOCSP(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		if ct := r.Header.Get("Content-Type"); ct != "" && ct != "application/ocsp-request" {
-			writeError(w, http.StatusBadRequest, "unsupported content type")
+			writeProblem(w, probUnsupportedMediaType, "Content-Type must be application/ocsp-request", map[string]any{"expected_content_type": "application/ocsp-request"})
 			recordOCSPMetrics(deps, "bad_request", start)
 			return
 		}
 		body, err := io.ReadAll(io.LimitReader(r.Body, maxOCSPRequestBytes+1))
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "reading request body failed")
+			writeProblem(w, probBodyUnreadable, "", nil)
 			recordOCSPMetrics(deps, "bad_request", start)
 			return
 		}
 		if len(body) > maxOCSPRequestBytes {
-			writeError(w, http.StatusBadRequest, "request body too large")
+			writeProblem(w, probBodyTooLarge, "", map[string]any{"max_bytes": maxOCSPRequestBytes})
 			recordOCSPMetrics(deps, "bad_request", start)
 			return
 		}
 
 		resp, err := deps.OCSPResponder.Respond(r.Context(), body)
 		if errors.Is(err, revocation.ErrMalformedRequest) {
-			writeError(w, http.StatusBadRequest, "invalid OCSP request")
+			writeProblem(w, probInvalidOCSPRequest, "body is not a DER-encoded RFC 6960 OCSPRequest", nil)
 			recordOCSPMetrics(deps, "bad_request", start)
 			return
 		}
 		if err != nil {
 			deps.Logger.Error("OCSP responder failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			recordOCSPMetrics(deps, "error", start)
 			return
 		}

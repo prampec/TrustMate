@@ -102,12 +102,12 @@ type reloadProfilesResponse struct {
 func handleReloadProfiles(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if deps.Profiles == nil {
-			writeError(w, http.StatusServiceUnavailable, "profile registry not configured")
+			writeProblem(w, probProfilesUnavailable, "", nil)
 			return
 		}
 		if err := deps.Profiles.Load(r.Context()); err != nil {
 			deps.Logger.Error("reloading profiles failed", "err", err)
-			writeError(w, http.StatusBadRequest, err.Error())
+			writeProblem(w, probProfileReloadFailed, err.Error(), nil)
 			return
 		}
 
@@ -124,7 +124,7 @@ func handleReloadProfiles(deps Deps) http.HandlerFunc {
 			Detail:    "",
 		}); err != nil {
 			deps.Logger.Error("writing audit entry failed", "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 

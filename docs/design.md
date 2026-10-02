@@ -260,6 +260,10 @@ GET    /v1/openapi.yaml              OpenAPI 3.1 description of this API  (disco
 GET    /llms.txt                     llms.txt summary for AI agents       (discovery module)
 ```
 
+Errors are RFC 9457 `application/problem+json` with stable
+`urn:trustmate:problem:*` type URIs (ACME routes use RFC 8555's
+`urn:ietf:params:acme:error:*`).
+
 Auth: mutual TLS client certs or a bearer token for `/v1/certificates` and
 `/v1/profiles`; `/v1/crl`, `/v1/ocsp`, `/v1/tsa`, `/v1/ca/*.pem` stay
 unauthenticated (they're public PKI endpoints by design, same as today's

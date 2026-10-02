@@ -99,8 +99,8 @@ is attached) without touching a single request file.
 - **ACME** (`09-acme/`): `TRUSTMATE_ENABLE_ACME=false` on every sandbox
   this collection has been run against so far, so `directory.bru` and
   `eab-token.bru` intentionally have no status assertion — they currently
-  get Go's plain-text 404 (module not routed), not the app's JSON error
-  envelope. Kept in the collection as ready-made requests for a future
+  get Go's plain-text 404 (module not routed), not the app's
+  `application/problem+json` error. Kept in the collection as ready-made requests for a future
   ACME-enabled deployment. A full `new-account` → `new-order` → `finalize`
   flow needs RFC 8555 JWS request signing, out of scope for a static
   Bruno request body.

@@ -32,35 +32,35 @@ func roleSatisfies(actual, min store.ClientRole) bool {
 func requireRole(deps Deps, min store.ClientRole, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-			writeError(w, http.StatusUnauthorized, "client certificate required")
+			writeProblem(w, probClientCertRequired, "this route requires an mTLS client certificate issued by this CA", map[string]any{"required_role": string(min)})
 			return
 		}
 		serial := r.TLS.PeerCertificates[0].SerialNumber.String()
 
 		roleRec, err := deps.Store.ClientRoles().Get(r.Context(), serial)
 		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusForbidden, "certificate not authorized")
+			writeProblem(w, probClientCertUnauthorized, "the presented client certificate has no role assigned", map[string]any{"client_serial": serial})
 			return
 		}
 		if err != nil {
 			deps.Logger.Error("looking up client role failed", "serial", serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 
 		certRec, err := deps.Store.Certificates().GetBySerial(r.Context(), serial)
 		if err != nil {
 			deps.Logger.Error("looking up client certificate failed", "serial", serial, "err", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
+			writeInternalError(w)
 			return
 		}
 		if certRec.RevokedAt != nil {
-			writeError(w, http.StatusForbidden, "certificate revoked")
+			writeProblem(w, probClientCertRevoked, "", map[string]any{"client_serial": serial})
 			return
 		}
 
 		if !roleSatisfies(roleRec.Role, min) {
-			writeError(w, http.StatusForbidden, "insufficient role")
+			writeProblem(w, probInsufficientRole, "this route requires role "+string(min)+"; the client certificate has role "+string(roleRec.Role), map[string]any{"required_role": string(min), "role": string(roleRec.Role)})
 			return
 		}
 		next(w, r)
