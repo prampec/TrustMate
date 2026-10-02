@@ -51,6 +51,9 @@ func newServer(t *toolset, readOnly bool) *mcp.Server {
 		Description: "Fetch the root or intermediate CA certificate (PEM plus decoded subject/validity)."}, t.getCACertificate)
 	mcp.AddTool(s, &mcp.Tool{Name: "get_crl", Annotations: readOnlyTool,
 		Description: "Fetch and decode the current CRL published by the root or intermediate CA: update times and revoked serials. Requires the revocation module."}, t.getCRL)
+	mcp.AddTool(s, &mcp.Tool{Name: "preview_certificate", Annotations: readOnlyTool,
+		Description: "Dry run of issue_certificate: shows the subject, validity, key usages and AIA/OCSP/CRL URLs the profile would produce, without signing, " +
+			"storing or writing anything. Takes the same subject inputs as issue_certificate (common_name/dns_names/key_type, or csr_pem); a generated key is discarded."}, t.previewCertificate)
 	mcp.AddTool(s, &mcp.Tool{Name: "list_clients", Annotations: readOnlyTool,
 		Description: "List API client certificates and their roles (admin role required)."}, t.listClients)
 	mcp.AddTool(s, &mcp.Tool{Name: "list_audit", Annotations: readOnlyTool,
@@ -307,6 +310,39 @@ func (t *toolset) issueCertificate(ctx context.Context, _ *mcp.CallToolRequest, 
 	}
 	out = issuedOutput{Serial: resp.Serial, Profile: resp.Profile, NotBefore: resp.NotBefore, NotAfter: resp.NotAfter}
 	return nil, out, t.saveIssued(in.Name, keyPEM, resp.PEM, &out)
+}
+
+type previewCertificateInput struct {
+	Profile    string   `json:"profile" jsonschema:"certificate profile name (see list_profiles)"`
+	CommonName string   `json:"common_name,omitempty" jsonschema:"subject common name"`
+	DNSNames   []string `json:"dns_names,omitempty" jsonschema:"DNS subject alternative names"`
+	KeyType    string   `json:"key_type,omitempty" jsonschema:"ecdsa-p256 (default), ecdsa-p384, rsa-3072 or rsa-4096"`
+	CSRPEM     string   `json:"csr_pem,omitempty" jsonschema:"existing PEM CSR to preview instead of a generated one"`
+}
+
+func (t *toolset) previewCertificate(ctx context.Context, _ *mcp.CallToolRequest, in previewCertificateInput) (*mcp.CallToolResult, map[string]any, error) {
+	if in.Profile == "" {
+		return nil, nil, fmt.Errorf("profile is required")
+	}
+	csrPEM := []byte(in.CSRPEM)
+	if in.CSRPEM != "" {
+		if in.CommonName != "" || len(in.DNSNames) > 0 || in.KeyType != "" {
+			return nil, nil, fmt.Errorf("common_name, dns_names and key_type must be empty when csr_pem is given; the CSR defines them")
+		}
+	} else {
+		if in.CommonName == "" && len(in.DNSNames) == 0 {
+			return nil, nil, fmt.Errorf("common_name or dns_names is required when csr_pem is not given")
+		}
+		var err error
+		// The server needs a CSR with a valid self-signature, so a key has
+		// to exist; it stays in memory and is dropped on return.
+		if _, csrPEM, err = generateKeyAndCSR(in.KeyType, in.CommonName, in.DNSNames); err != nil {
+			return nil, nil, err
+		}
+	}
+	var out map[string]any
+	err := t.client.Post("/v1/certificates?dry_run=true", map[string]string{"profile": in.Profile, "csr": string(csrPEM)}, &out)
+	return nil, out, err
 }
 
 type issueClientInput struct {

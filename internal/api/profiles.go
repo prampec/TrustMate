@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/x509"
 	"net/http"
 	"time"
 
@@ -23,8 +24,8 @@ func toProfileResponse(p profiles.Profile) profileResponse {
 	return profileResponse{
 		Name:        p.Name,
 		Version:     p.Version,
-		KeyUsage:    keyUsageStrings(p),
-		ExtKeyUsage: extKeyUsageStrings(p),
+		KeyUsage:    keyUsageStrings(p.KeyUsage),
+		ExtKeyUsage: extKeyUsageStrings(p.ExtKeyUsage),
 		CriticalEKU: p.CriticalEKU,
 		Validity:    p.Validity.String(),
 		EnableOCSP:  p.EnableOCSP,
@@ -32,7 +33,7 @@ func toProfileResponse(p profiles.Profile) profileResponse {
 	}
 }
 
-func keyUsageStrings(p profiles.Profile) []string {
+func keyUsageStrings(ku x509.KeyUsage) []string {
 	names := []struct {
 		bit  int
 		name string
@@ -49,14 +50,14 @@ func keyUsageStrings(p profiles.Profile) []string {
 	}
 	var out []string
 	for _, n := range names {
-		if int(p.KeyUsage)&n.bit != 0 {
+		if int(ku)&n.bit != 0 {
 			out = append(out, n.name)
 		}
 	}
 	return out
 }
 
-func extKeyUsageStrings(p profiles.Profile) []string {
+func extKeyUsageStrings(ekus []x509.ExtKeyUsage) []string {
 	var names = map[int]string{
 		1: "serverAuth",
 		2: "clientAuth",
@@ -65,8 +66,8 @@ func extKeyUsageStrings(p profiles.Profile) []string {
 		8: "timeStamping",
 		9: "ocspSigning",
 	}
-	out := make([]string, 0, len(p.ExtKeyUsage))
-	for _, eku := range p.ExtKeyUsage {
+	out := make([]string, 0, len(ekus))
+	for _, eku := range ekus {
 		if name, ok := names[int(eku)]; ok {
 			out = append(out, name)
 		}

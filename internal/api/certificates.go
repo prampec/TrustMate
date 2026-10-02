@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -169,10 +170,24 @@ type issueCertificateResponse struct {
 // certificate they want by naming a profile, not by smuggling policy
 // fields into the CSR.
 //
+// With ?dry_run=true every check runs the same way but nothing is signed,
+// stored or audited; the response previews the certificate instead, so a
+// caller (often an AI agent) can confirm the profile yields what it
+// expects before committing to a real issuance.
+//
 // Requires manager (or admin) role -- see internal/api/auth.go and
 // docs/design.md's Phase 3 roadmap entry.
 func handleIssueCertificate(deps Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		dryRun := false
+		if v := r.URL.Query().Get("dry_run"); v != "" {
+			var err error
+			if dryRun, err = strconv.ParseBool(v); err != nil {
+				writeProblem(w, probInvalidParameter, "dry_run must be true or false", map[string]any{"parameter": "dry_run"})
+				return
+			}
+		}
+
 		var req issueCertificateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeProblem(w, probMalformedJSON, err.Error(), nil)
@@ -204,6 +219,33 @@ func handleIssueCertificate(deps Deps) http.HandlerFunc {
 
 		profile = profile.WithIssuerURLs(deps.PublicBaseURL, deps.ModuleConfig.EnableRevocation)
 		now := time.Now()
+		if dryRun {
+			tmpl, err := pki.LeafTemplate(profile, csr.Subject, csr.PublicKey, now, now.Add(profile.Validity), csr.DNSNames)
+			if err != nil {
+				deps.Logger.Error("building certificate preview failed", "profile", profile.Name, "err", err)
+				writeInternalError(w)
+				return
+			}
+			writeJSON(w, http.StatusOK, issuePreviewResponse{
+				DryRun:             true,
+				Profile:            profile.Name,
+				Subject:            tmpl.Subject.String(),
+				DNSNames:           nonNil(tmpl.DNSNames),
+				Issuer:             deps.IntermediateIssuer.Cert.Subject.String(),
+				NotBefore:          tmpl.NotBefore.UTC(),
+				NotAfter:           tmpl.NotAfter.UTC(),
+				PublicKeyAlgorithm: csr.PublicKeyAlgorithm.String(),
+				KeyUsage:           nonNil(keyUsageStrings(tmpl.KeyUsage)),
+				// The template may carry EKUs as a raw critical extension
+				// rather than in ExtKeyUsage, so read them off the profile.
+				ExtKeyUsage:   extKeyUsageStrings(profile.ExtKeyUsage),
+				CriticalEKU:   profile.CriticalEKU,
+				AIAIssuerURLs: nonNil(tmpl.IssuingCertificateURL),
+				OCSPURLs:      nonNil(tmpl.OCSPServer),
+				CRLURLs:       nonNil(tmpl.CRLDistributionPoints),
+			})
+			return
+		}
 		rec, err := issueLeafCertificate(r.Context(), deps, profile, csr.Subject, csr.PublicKey, csr.DNSNames, now, r.RemoteAddr, "issue", profile.Name)
 		if err != nil {
 			deps.Logger.Error("issuing certificate failed", "profile", profile.Name, "err", err)
@@ -224,6 +266,33 @@ func handleIssueCertificate(deps Deps) http.HandlerFunc {
 			PEM:       string(rec.PEM),
 		})
 	}
+}
+
+// issuePreviewResponse is what POST /v1/certificates?dry_run=true returns
+// instead of a certificate. It has no serial: the template's serial is
+// random and is discarded with it.
+type issuePreviewResponse struct {
+	DryRun             bool      `json:"dry_run"`
+	Profile            string    `json:"profile"`
+	Subject            string    `json:"subject"`
+	DNSNames           []string  `json:"dns_names"`
+	Issuer             string    `json:"issuer"`
+	NotBefore          time.Time `json:"not_before"`
+	NotAfter           time.Time `json:"not_after"`
+	PublicKeyAlgorithm string    `json:"public_key_algorithm"`
+	KeyUsage           []string  `json:"key_usage"`
+	ExtKeyUsage        []string  `json:"ext_key_usage"`
+	CriticalEKU        bool      `json:"critical_eku"`
+	AIAIssuerURLs      []string  `json:"aia_issuer_urls"`
+	OCSPURLs           []string  `json:"ocsp_urls"`
+	CRLURLs            []string  `json:"crl_urls"`
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 type certificateResponse struct {

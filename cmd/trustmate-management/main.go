@@ -44,11 +44,15 @@ func usage() {
 	fmt.Fprint(os.Stderr, `trustmate-management: operator CLI for TrustMate certificate operations.
 
 Usage:
-  trustmate-management certificates issue   --profile=<name> --csr=<file> [flags]
+  trustmate-management certificates issue   --profile=<name> --csr=<file> [--dry-run] [flags]
   trustmate-management certificates get     [flags] <serial>
   trustmate-management certificates revoke  [--reason=<reason>] [flags] <serial>
   trustmate-management tsa rotate           [flags]
   trustmate-management version
+
+"certificates issue --dry-run" validates the request and prints the
+certificate the profile would produce (subject, validity, key usages,
+AIA/OCSP/CRL URLs) without signing or storing anything.
 
 Flags must come before any positional argument (Go's flag package stops
 parsing at the first non-flag argument).
@@ -78,6 +82,7 @@ func runCertificates(args []string) {
 	profile := fs.String("profile", "", "profile to issue against (issue)")
 	csrPath := fs.String("csr", "", "path to a PEM-encoded CSR (issue)")
 	reason := fs.String("reason", "", "revocation reason (revoke)")
+	dryRun := fs.Bool("dry-run", false, "preview the certificate without issuing it (issue)")
 	if err := fs.Parse(args[1:]); err != nil {
 		fatal(err)
 	}
@@ -95,7 +100,11 @@ func runCertificates(args []string) {
 		}
 		var out any
 		body := map[string]string{"profile": *profile, "csr": string(csrPEM)}
-		if err := client.Post("/v1/certificates", body, &out); err != nil {
+		path := "/v1/certificates"
+		if *dryRun {
+			path += "?dry_run=true"
+		}
+		if err := client.Post(path, body, &out); err != nil {
 			fatal(err)
 		}
 		printJSON(out)

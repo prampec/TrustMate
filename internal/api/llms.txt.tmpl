@@ -4,7 +4,7 @@
 
 Base URL: {{.BaseURL}}
 
-- Certificate properties (key usage, EKU, validity, AIA/CDP/OCSP) come from the named profile, not from the CSR. List profiles before you issue anything.
+- Certificate properties (key usage, EKU, validity, AIA/CDP/OCSP) come from the named profile, not from the CSR. List profiles before you issue anything, and add `?dry_run=true` to `POST /v1/certificates` to preview the result without issuing.
 - `admin` is a superset of `manager`. Each operation's required role is in the OpenAPI spec as `x-required-role`.
 - Revocation is irreversible. Revoking an API client's certificate also removes its API access.
 - Errors are RFC 9457 `application/problem+json` documents. Branch on the stable `type` URI (`urn:trustmate:problem:*`; the catalogue is the `Problem` schema in the OpenAPI spec). Extension members carry what you need to fix the request: `available_profiles`, `missing_fields`, `allowed_values`, `required_role`.{{if .ACME}} ACME routes use RFC 8555 `urn:ietf:params:acme:error:*` types.{{end}}
@@ -31,7 +31,7 @@ Base URL: {{.BaseURL}}
 ## Certificate operations (mTLS, manager role)
 
 - `GET /v1/profiles`: list available profiles
-- `POST /v1/certificates`: issue, body `{"profile": "...", "csr": "<PEM>"}`
+- `POST /v1/certificates`: issue, body `{"profile": "...", "csr": "<PEM>"}`; `?dry_run=true` previews without issuing
 - `GET /v1/certificates/{serial}`: look up by decimal serial
 - `POST /v1/certificates/{serial}/revoke`: revoke, optional body `{"reason": "..."}`
 

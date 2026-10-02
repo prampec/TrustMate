@@ -12,10 +12,33 @@ import (
 )
 
 // IssueLeaf issues a leaf certificate against profile, signed by issuer.
-// AIA caIssuers is always set (per docs/design.md's table: "on every
-// non-root cert"); CRL/OCSP extensions are set only when the profile
-// enables them.
 func IssueLeaf(profile profiles.Profile, subject pkix.Name, pub crypto.PublicKey, issuer Issuer, notBefore, notAfter time.Time, dnsNames []string) (*x509.Certificate, error) {
+	tmpl, err := LeafTemplate(profile, subject, pub, notBefore, notAfter, dnsNames)
+	if err != nil {
+		return nil, err
+	}
+
+	ski, err := subjectKeyID(pub)
+	if err != nil {
+		return nil, err
+	}
+	tmpl.SubjectKeyId = ski
+	tmpl.AuthorityKeyId = issuer.Cert.SubjectKeyId
+
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, issuer.Cert, pub, issuer.Signer)
+	if err != nil {
+		return nil, fmt.Errorf("pki: creating leaf certificate: %w", err)
+	}
+	return x509.ParseCertificate(der)
+}
+
+// LeafTemplate builds the unsigned template IssueLeaf signs, so a dry run
+// can preview exactly what issuance would produce without a second copy
+// of this policy. AIA caIssuers is always set (per docs/design.md's
+// table: "on every non-root cert"); CRL/OCSP extensions are set only when
+// the profile enables them. The serial is random and never reused, and
+// SubjectKeyId/AuthorityKeyId are left for IssueLeaf to fill in.
+func LeafTemplate(profile profiles.Profile, subject pkix.Name, pub crypto.PublicKey, notBefore, notAfter time.Time, dnsNames []string) (*x509.Certificate, error) {
 	req := CertRequest{
 		Subject:             subject,
 		PublicKey:           pub,
@@ -34,22 +57,5 @@ func IssueLeaf(profile profiles.Profile, subject pkix.Name, pub crypto.PublicKey
 	if profile.EnableOCSP {
 		req.OCSPURL = profile.OCSPTemplate
 	}
-
-	tmpl, err := buildTemplate(req)
-	if err != nil {
-		return nil, err
-	}
-
-	ski, err := subjectKeyID(pub)
-	if err != nil {
-		return nil, err
-	}
-	tmpl.SubjectKeyId = ski
-	tmpl.AuthorityKeyId = issuer.Cert.SubjectKeyId
-
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, issuer.Cert, pub, issuer.Signer)
-	if err != nil {
-		return nil, fmt.Errorf("pki: creating leaf certificate: %w", err)
-	}
-	return x509.ParseCertificate(der)
+	return buildTemplate(req)
 }

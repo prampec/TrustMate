@@ -163,8 +163,18 @@ paths:
         self-signature is verified. Key usage, extended key usage, validity
         and AIA/CDP/OCSP extensions come from the named profile, never from
         the CSR. List valid profile names with `GET /v1/profiles`.
+
+        With `dry_run=true` the request is validated the same way but nothing
+        is signed, stored or audited; the response (200) previews the
+        certificate instead.
       x-required-role: manager
       security: [{mtls: []}]
+      parameters:
+        - name: dry_run
+          in: query
+          required: false
+          schema: {type: boolean, default: false}
+          description: Preview the certificate instead of issuing it.
       requestBody:
         required: true
         content:
@@ -180,6 +190,27 @@ paths:
                   type: string
                   description: PEM-encoded PKCS#10 certificate signing request.
       responses:
+        "200":
+          description: Dry-run preview (only with `dry_run=true`). Contains no serial or PEM.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  dry_run: {type: boolean, const: true}
+                  profile: {type: string}
+                  subject: {type: string}
+                  dns_names: {type: array, items: {type: string}}
+                  issuer: {type: string}
+                  not_before: {type: string, format: date-time}
+                  not_after: {type: string, format: date-time}
+                  public_key_algorithm: {type: string, examples: [ECDSA, RSA, Ed25519]}
+                  key_usage: {type: array, items: {type: string}}
+                  ext_key_usage: {type: array, items: {type: string}}
+                  critical_eku: {type: boolean}
+                  aia_issuer_urls: {type: array, items: {type: string, format: uri}}
+                  ocsp_urls: {type: array, items: {type: string, format: uri}}
+                  crl_urls: {type: array, items: {type: string, format: uri}}
         "201":
           description: Certificate issued.
           content:

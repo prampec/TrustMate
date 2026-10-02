@@ -259,6 +259,7 @@ assistant really needs admin tools.
 |---|---|---|
 | `get_health`, `get_ca_certificate`, `get_crl` | any | CRL is decoded (update times, revoked serials) |
 | `list_profiles`, `get_certificate` | manager | |
+| `preview_certificate` | manager | dry run of `issue_certificate`: shows what the profile would produce; signs, stores and writes nothing |
 | `list_clients`, `list_audit` | admin | |
 | `issue_certificate` | manager | generates the key pair locally; writes `<name>.key.pem` (0600) and `<name>.cert.pem` to `--output-dir`, or signs a supplied `csr_pem` |
 | `revoke_certificate` | manager | marked destructive |

@@ -123,6 +123,15 @@ func (f *fakeCA) handler() http.Handler {
 	mux.HandleFunc("POST /v1/certificates", func(w http.ResponseWriter, r *http.Request) {
 		var req struct{ Profile, CSR string }
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		if r.URL.Query().Get("dry_run") == "true" {
+			block, _ := pem.Decode([]byte(req.CSR))
+			csr, err := x509.ParseCertificateRequest(block.Bytes)
+			if err != nil {
+				f.t.Fatalf("fake CA got bad CSR: %v", err)
+			}
+			writeJSON(w, map[string]any{"dry_run": true, "profile": req.Profile, "subject": csr.Subject.String(), "dns_names": csr.DNSNames})
+			return
+		}
 		if req.Profile != "tls-server" {
 			w.WriteHeader(http.StatusBadRequest)
 			writeJSON(w, map[string]any{
@@ -295,8 +304,10 @@ func TestReadOnlyHidesMutatingTools(t *testing.T) {
 			t.Errorf("read-only mode exposes %s", name)
 		}
 	}
-	if !slices.Contains(ro, "get_certificate") {
-		t.Errorf("read-only mode missing get_certificate: %v", ro)
+	for _, name := range []string{"get_certificate", "preview_certificate"} {
+		if !slices.Contains(ro, name) {
+			t.Errorf("read-only mode missing %s: %v", name, ro)
+		}
 	}
 }
 
@@ -481,5 +492,28 @@ func TestTimestampFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.outDir, "replay.tsr")); !os.IsNotExist(err) {
 		t.Error("mismatched token was written")
+	}
+}
+
+func TestPreviewCertificateIssuesNothingAndWritesNothing(t *testing.T) {
+	h := newHarness(t, true)
+	var out map[string]any
+	if msg := h.call(t, "preview_certificate", map[string]any{
+		"profile": "tls-server", "common_name": "web01.example.com", "dns_names": []string{"web01.example.com"},
+	}, &out); msg != "" {
+		t.Fatalf("preview_certificate failed: %s", msg)
+	}
+	if out["dry_run"] != true || out["subject"] != "CN=web01.example.com" {
+		t.Errorf("unexpected output %v", out)
+	}
+	if n := h.fake.issueCalls.Load(); n != 0 {
+		t.Errorf("fake CA signed %d certificates during a preview", n)
+	}
+	if _, err := os.Stat(h.outDir); !os.IsNotExist(err) {
+		t.Errorf("preview created the output directory (err=%v)", err)
+	}
+
+	if msg := h.call(t, "preview_certificate", map[string]any{"profile": "tls-server"}, nil); msg == "" {
+		t.Error("preview without subject or CSR was accepted")
 	}
 }

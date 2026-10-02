@@ -1,0 +1,36 @@
+meta {
+  name: POST /v1/certificates?dry_run=true (preview, nothing issued)
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{baseUrl}}/v1/certificates?dry_run=true
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+}
+
+body:json {
+  {
+    "profile": "document-signing",
+    "csr": {{csrDocumentSigning}}
+  }
+}
+
+assert {
+  res.status: 200
+  res.body.dry_run: true
+  res.body.profile: document-signing
+  res.body.serial: isUndefined
+}
+
+docs {
+  Requires manager (or admin) role. Same request as issue-good.bru with
+  ?dry_run=true: the server validates the CSR and profile and returns a
+  preview (subject, validity, key usages, AIA/OCSP/CRL URLs) without
+  signing, storing or auditing anything.
+}

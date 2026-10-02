@@ -6,7 +6,7 @@ Key facts for agents:
 
 - Every protected route needs a client certificate issued by the same TrustMate instance with a role assigned. `manager` covers certificate operations (issue, look up, revoke, list profiles). `admin` is a superset that adds client onboarding, audit, profile reload, TSA rotation and ACME EAB tokens.
 - Public PKI routes need no authentication: `/v1/ca/*.pem`, `/v1/crl/*`, `/v1/ocsp`, `/v1/tsa`. The ACME routes authenticate with JWS signatures instead of mTLS.
-- Certificate properties (key usage, EKU, validity, AIA/CDP/OCSP) come from the named profile, not from the CSR. Call `GET /v1/profiles` before you issue anything.
+- Certificate properties (key usage, EKU, validity, AIA/CDP/OCSP) come from the named profile, not from the CSR. Call `GET /v1/profiles` before you issue anything, and use `POST /v1/certificates?dry_run=true` to preview the result without issuing.
 - Revocation is irreversible. Revoking an API client's certificate also removes its API access.
 - Revocation, TSA, ACME and discovery are optional modules. A disabled module's routes return a plain 404.
 - Errors are RFC 9457 `application/problem+json` documents. Branch on the stable `type` URI (`urn:trustmate:problem:*`; the catalogue is the `Problem` schema in the OpenAPI spec). Extension members carry what you need to fix the request: `available_profiles`, `missing_fields`, `allowed_values`, `required_role`. ACME routes use RFC 8555 `urn:ietf:params:acme:error:*` types.
