@@ -83,6 +83,7 @@ func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 
 	if deps.ModuleConfig.EnableDiscovery {
 		mux.HandleFunc("GET /v1/openapi.yaml", handleOpenAPI)
+		mux.HandleFunc("GET /llms.txt", handleLLMsTxt(deps))
 	}
 
 	return withRequestLogging(deps.Logger, mux)

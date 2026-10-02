@@ -1,0 +1,30 @@
+# TrustMate
+
+> TrustMate is a self-contained Certificate Authority service written in Go. It bootstraps its own root and intermediate CA and issues X.509 certificates from CSRs against named profiles. It can also serve CRLs, an RFC 6960 OCSP responder, an RFC 3161 time-stamp authority, and RFC 8555 ACME enrollment with External Account Binding. Clients authenticate to the REST API with mTLS client certificates that hold the `manager` or `admin` role.
+
+Key facts for agents:
+
+- Every protected route needs a client certificate issued by the same TrustMate instance with a role assigned. `manager` covers certificate operations (issue, look up, revoke, list profiles). `admin` is a superset that adds client onboarding, audit, profile reload, TSA rotation and ACME EAB tokens.
+- Public PKI routes need no authentication: `/v1/ca/*.pem`, `/v1/crl/*`, `/v1/ocsp`, `/v1/tsa`. The ACME routes authenticate with JWS signatures instead of mTLS.
+- Certificate properties (key usage, EKU, validity, AIA/CDP/OCSP) come from the named profile, not from the CSR. Call `GET /v1/profiles` before you issue anything.
+- Revocation is irreversible. Revoking an API client's certificate also removes its API access.
+- Revocation, TSA, ACME and discovery are optional modules. A disabled module's routes return a plain 404.
+- Errors are JSON bodies of the form `{"error": "..."}`. The ACME routes return RFC 8555 `application/problem+json` documents instead.
+- A running instance describes itself at `GET /llms.txt` and `GET /v1/openapi.yaml`, unless the operator disabled the discovery module.
+
+## Docs
+
+- [README](https://github.com/prampec/trustmate/blob/main/README.md): quick start, configuration, ACME, keystores, operator CLIs, and the MCP server
+- [OpenAPI spec](https://github.com/prampec/trustmate/blob/main/internal/api/openapi.yaml): every REST route, its request and response schemas, and its required role (`x-required-role`)
+- [Environment reference](https://github.com/prampec/trustmate/blob/main/docs/environment.md): every `TRUSTMATE_*` variable and module toggle
+- [Design](https://github.com/prampec/trustmate/blob/main/docs/design.md): architecture, security model, roadmap
+
+## Tools for agents
+
+- [trustmate-mcp](https://github.com/prampec/trustmate/blob/main/README.md#mcp-server-for-ai-assistants): local stdio MCP server over the REST API. It generates private keys locally, keeps the client certificate out of the model's context, marks destructive tools, and has a `--read-only` mode. Prefer it to raw HTTP calls when an MCP client is available.
+- [Operator CLIs](https://github.com/prampec/trustmate/blob/main/README.md#operator-clis): `trustmate-admin` (profiles, clients, audit) and `trustmate-management` (certificate issue/get/revoke)
+
+## Optional
+
+- [Bruno collection](https://github.com/prampec/trustmate/tree/main/docs/bruno): runnable example requests for every route, including error cases
+- [Contributor instructions](https://github.com/prampec/trustmate/blob/main/AGENTS.md): build, test and code style rules for agents changing this repository

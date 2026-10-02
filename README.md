@@ -213,8 +213,18 @@ The full REST API is described by an OpenAPI 3.1 document,
 [`internal/api/openapi.yaml`](internal/api/openapi.yaml). A running
 instance also serves it unauthenticated at `GET /v1/openapi.yaml`, so
 HTTP clients, SDK generators and AI agents can discover what the service
-offers. Set `TRUSTMATE_ENABLE_DISCOVERY=false` to turn the route off.
-Each operation's `x-required-role` names the mTLS client role it needs.
+offers. Each operation's `x-required-role` names the mTLS client role it
+needs.
+
+For AI agents, [`llms.txt`](llms.txt) at the repository root summarizes
+the project ([llmstxt.org](https://llmstxt.org) format). A running
+instance also serves its own `GET /llms.txt`, which lists its public PKI
+URLs and enabled modules under its `TRUSTMATE_PUBLIC_BASE_URL`. It
+reveals nothing an unauthenticated caller couldn't find by probing: no
+profiles, clients or server version.
+
+Set `TRUSTMATE_ENABLE_DISCOVERY=false` to turn off both
+`/v1/openapi.yaml` and `/llms.txt`.
 
 ## MCP server for AI assistants
 
@@ -300,6 +310,7 @@ internal/store/          issued-cert ledger, profiles, roles, audit log, ACME st
 internal/observability/  structured logging + Prometheus metrics
 docs/design.md           full product design
 docs/environment.md      full TRUSTMATE_* environment variable reference
+llms.txt                 project summary for AI agents (llmstxt.org)
 Dockerfile.pkcs11        opt-in cgo build variant for the pkcs11 keystore driver
 ```
 

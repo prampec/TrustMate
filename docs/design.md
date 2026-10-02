@@ -257,6 +257,7 @@ GET    /healthz                      liveness probe
 GET    /readyz                       readiness probe (datastore reachable, etc.)
 GET    /metrics                      Prometheus exposition format
 GET    /v1/openapi.yaml              OpenAPI 3.1 description of this API  (discovery module)
+GET    /llms.txt                     llms.txt summary for AI agents       (discovery module)
 ```
 
 Auth: mutual TLS client certs or a bearer token for `/v1/certificates` and

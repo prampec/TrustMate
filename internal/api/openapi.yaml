@@ -116,6 +116,22 @@ paths:
             application/yaml:
               schema: {type: string}
 
+  /llms.txt:
+    get:
+      tags: [ops]
+      operationId: getLLMsTxt
+      summary: llms.txt summary of this instance for AI agents
+      description: |
+        Markdown overview (https://llmstxt.org) of this instance's public
+        endpoints and enabled modules. Served only when the discovery
+        module is enabled.
+      responses:
+        "200":
+          description: llms.txt document.
+          content:
+            text/plain:
+              schema: {type: string}
+
   /v1/ca/root.pem:
     get:
       tags: [ca]

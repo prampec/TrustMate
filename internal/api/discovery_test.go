@@ -168,3 +168,78 @@ func TestOpenAPIRouteAbsentWhenDiscoveryDisabled(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
+
+func getLLMsTxt(t *testing.T, deps Deps) string {
+	t.Helper()
+	deps.Logger = testLogger()
+	deps.ModuleConfig.EnableDiscovery = true
+	router := NewRouter(deps, nil)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/llms.txt", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain", ct)
+	}
+	return rec.Body.String()
+}
+
+func TestLLMsTxtListsOnlyEnabledModules(t *testing.T) {
+	body := getLLMsTxt(t, Deps{
+		InstanceName:  "Example Corp",
+		PublicBaseURL: "https://ca.example.com/",
+		ModuleConfig:  ModuleConfig{EnableRevocation: true},
+	})
+
+	for _, want := range []string{
+		"# Example Corp\n",
+		"(https://ca.example.com/v1/openapi.yaml)",
+		"(https://ca.example.com/v1/ca/root.pem)",
+		"(https://ca.example.com/v1/crl/intermediate.crl)",
+		"POST https://ca.example.com/v1/ocsp",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("llms.txt missing %q:\n%s", want, body)
+		}
+	}
+	for _, unwanted := range []string{"/v1/tsa", "/v1/acme", "{{", "<no value>"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("llms.txt unexpectedly contains %q:\n%s", unwanted, body)
+		}
+	}
+}
+
+func TestLLMsTxtIncludesTSAAndACMEWhenEnabled(t *testing.T) {
+	body := getLLMsTxt(t, Deps{
+		PublicBaseURL: "https://ca.example.com",
+		ModuleConfig:  ModuleConfig{EnableTSA: true, EnableACME: true},
+	})
+
+	for _, want := range []string{
+		"# TrustMate\n",
+		"POST https://ca.example.com/v1/tsa",
+		"/v1/tsa/rotate",
+		"(https://ca.example.com/v1/acme/directory)",
+		"/v1/acme/eab-tokens",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("llms.txt missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "/v1/crl/") {
+		t.Errorf("llms.txt lists CRL with revocation disabled:\n%s", body)
+	}
+}
+
+func TestLLMsTxtAbsentWhenDiscoveryDisabled(t *testing.T) {
+	router := NewRouter(Deps{Logger: testLogger()}, nil)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/llms.txt", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}

@@ -1,0 +1,58 @@
+# {{.InstanceName}}
+
+> {{.InstanceName}} is a TrustMate Certificate Authority. It issues X.509 certificates from CSRs against named profiles. Protected REST routes need an mTLS client certificate issued by this CA that holds the `manager` or `admin` role. Public PKI routes need no authentication.
+
+Base URL: {{.BaseURL}}
+
+- Certificate properties (key usage, EKU, validity, AIA/CDP/OCSP) come from the named profile, not from the CSR. List profiles before you issue anything.
+- `admin` is a superset of `manager`. Each operation's required role is in the OpenAPI spec as `x-required-role`.
+- Revocation is irreversible. Revoking an API client's certificate also removes its API access.
+- Errors are JSON bodies of the form `{"error": "..."}`.{{if .ACME}} The ACME routes return RFC 8555 `application/problem+json` documents instead.{{end}}
+- For an MCP client, the `trustmate-mcp` server wraps this API. It keeps private keys and the client certificate local: https://github.com/prampec/trustmate/blob/main/README.md#mcp-server-for-ai-assistants
+
+## API
+
+- [OpenAPI spec]({{.BaseURL}}/v1/openapi.yaml): every route with schemas and required roles. Routes of modules that are disabled on this instance return 404.
+- [Health]({{.BaseURL}}/healthz): liveness probe
+
+## Public PKI (no authentication)
+
+- [Root CA certificate]({{.BaseURL}}/v1/ca/root.pem): PEM
+- [Intermediate CA certificate]({{.BaseURL}}/v1/ca/intermediate.pem): PEM; issuer of all leaf certificates
+{{- if .Revocation}}
+- [Intermediate CRL]({{.BaseURL}}/v1/crl/intermediate.crl): DER; revoked leaf certificates
+- [Root CRL]({{.BaseURL}}/v1/crl/root.crl): DER
+- OCSP responder: `POST {{.BaseURL}}/v1/ocsp` with `application/ocsp-request`
+{{- end}}
+{{- if .TSA}}
+- RFC 3161 time-stamp authority: `POST {{.BaseURL}}/v1/tsa` with `application/timestamp-query` (SHA-256 or stronger)
+{{- end}}
+
+## Certificate operations (mTLS, manager role)
+
+- `GET /v1/profiles`: list available profiles
+- `POST /v1/certificates`: issue, body `{"profile": "...", "csr": "<PEM>"}`
+- `GET /v1/certificates/{serial}`: look up by decimal serial
+- `POST /v1/certificates/{serial}/revoke`: revoke, optional body `{"reason": "..."}`
+
+## Administration (mTLS, admin role)
+
+- `POST /v1/clients`, `GET /v1/clients`: onboard and list API clients
+- `GET /v1/audit`: audit trail
+- `POST /v1/profiles/reload`: re-read profiles from disk
+{{- if .TSA}}
+- `POST /v1/tsa/rotate`: mint a new TSA signing identity
+{{- end}}
+{{- if .ACME}}
+- `POST /v1/acme/eab-tokens`: issue a one-time ACME External Account Binding credential
+{{- end}}
+{{- if .ACME}}
+
+## ACME
+
+- [Directory]({{.BaseURL}}/v1/acme/directory): RFC 8555, External Account Binding required. Order identifiers use type `trustmate-client` with the subject common name as value.
+{{- end}}
+
+## Optional
+
+- [TrustMate project documentation](https://github.com/prampec/trustmate/blob/main/llms.txt)

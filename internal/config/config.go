@@ -48,7 +48,7 @@ type ModulesConfig struct {
 	// not something every deployment needs.
 	ACME bool `yaml:"acme"`
 	// Discovery serves machine-readable descriptions of this API
-	// (/v1/openapi.yaml) without authentication, so clients and AI agents
+	// (/v1/openapi.yaml, /llms.txt) without authentication, so clients and AI agents
 	// can find out what the service offers. On by default: everything it
 	// exposes is already public in the source tree.
 	Discovery bool `yaml:"discovery"`
