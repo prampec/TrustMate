@@ -34,12 +34,17 @@ func newServer(t *toolset, readOnly bool) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "trustmate", Version: version.Version}, &mcp.ServerOptions{
 		Instructions: "Tools for operating a TrustMate certificate authority (certificate issuance, revocation, CRL, RFC 3161 timestamps). " +
 			"Certificate serials are decimal strings. Private keys for newly issued certificates are generated locally and only their file path is returned. " +
-			"Admin-only tools fail with 403 when the configured client certificate has the manager role.",
+			"Call preview_certificate before issue_certificate, and confirm with the user before any destructive tool. " +
+			"Admin-only tools fail with 403 when the configured client certificate has the manager role. " +
+			"Errors carry the server's RFC 9457 problem document; its extension members (e.g. available_profiles, allowed_values) say how to fix the request.",
 	})
 
 	readOnlyTool := &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: ptr(false)}
 	additive := &mcp.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(false)}
 	destructive := &mcp.ToolAnnotations{DestructiveHint: ptr(true), OpenWorldHint: ptr(false)}
+
+	t.addResources(s)
+	addPrompts(s, readOnly)
 
 	mcp.AddTool(s, &mcp.Tool{Name: "get_health", Annotations: readOnlyTool,
 		Description: "Check TrustMate liveness and readiness; returns instance name and server version."}, t.getHealth)

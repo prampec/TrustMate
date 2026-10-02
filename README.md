@@ -267,6 +267,22 @@ assistant really needs admin tools.
 | `reload_profiles`, `rotate_tsa` | admin | `rotate_tsa` marked destructive |
 | `timestamp_file` | any | sends only the file's SHA-256; writes `<name>.tsr` |
 
+It also exposes read-only **resources** the client can attach as context
+(`trustmate://ca/root.pem`, `trustmate://ca/intermediate.pem`,
+`trustmate://profiles`, `trustmate://openapi.yaml` and
+`trustmate://certificates/{serial}`), and **prompts** that most clients
+offer as slash commands:
+
+| Prompt | What it does |
+|---|---|
+| `certificate-status` | reports a certificate's validity and revocation status, cross-checked against the CRL |
+| `issue-certificate` | picks a profile, previews, asks for confirmation, then issues |
+| `revoke-certificate` | inspects, warns, asks for confirmation, revokes and verifies |
+
+The prompts only steer the assistant through the tools above, so role and
+`--read-only` limits still apply. `issue-certificate` and
+`revoke-certificate` are not offered in read-only mode.
+
 Private keys never pass through the MCP channel; tools return file paths
 only. The assistant picks a base file name, not a path, and existing files
 are never overwritten. `--read-only` (or `TRUSTMATE_MCP_READ_ONLY=true`)
