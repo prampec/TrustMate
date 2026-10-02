@@ -1,0 +1,790 @@
+openapi: 3.1.0
+info:
+  title: TrustMate API
+  version: "1"
+  summary: Self-contained Certificate Authority with CRL, OCSP, RFC 3161 TSA and ACME.
+  description: |
+    TrustMate issues X.509 certificates from a root/intermediate CA it
+    bootstraps itself, and optionally serves revocation (CRL, OCSP), RFC 3161
+    timestamps, and RFC 8555 ACME enrollment.
+
+    Authentication is mutual TLS. Operations marked with the `mtls` security
+    requirement need a client certificate issued by this CA that has a role
+    assigned: `manager` (certificate operations) or `admin` (everything,
+    including client onboarding and configuration). The required role is
+    stated in each operation's `x-required-role`. Public PKI endpoints (CA
+    certificates, CRL, OCSP, TSA) and the ACME client-facing routes need no
+    client certificate; ACME requests authenticate with their own JWS
+    signatures instead.
+
+    Route groups tagged `revocation`, `tsa` and `acme` are optional modules.
+    When the operator disables a module its routes are not registered and
+    return a plain-text 404 from the HTTP router.
+  license:
+    name: See LICENSE in the repository
+servers:
+  - url: https://localhost:8080
+    description: Default development listener; replace with the deployment's public base URL.
+tags:
+  - name: ops
+    description: Health, readiness, metrics and service discovery.
+  - name: ca
+    description: Public CA certificate distribution.
+  - name: certificates
+    description: Leaf certificate issuance, lookup and revocation.
+  - name: profiles
+    description: Certificate profiles (what kind of certificate a request yields).
+  - name: clients
+    description: API client certificates and their roles.
+  - name: audit
+    description: Audit trail.
+  - name: revocation
+    description: CRL and OCSP (optional module, on by default).
+  - name: tsa
+    description: RFC 3161 time-stamp authority (optional module, on by default).
+  - name: acme
+    description: |
+      RFC 8555 enrollment with mandatory External Account Binding (optional
+      module, off by default). Orders use the custom identifier type
+      `trustmate-client` whose value is the subject common name, are created
+      directly in `ready` status, and order/authorization/certificate
+      resources are plain GETs rather than POST-as-GET.
+
+paths:
+  /healthz:
+    get:
+      tags: [ops]
+      operationId: getHealth
+      summary: Liveness probe
+      responses:
+        "200":
+          description: Service is alive.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, const: ok}
+                  instance: {type: string, description: Deployment's instance name.}
+                  version: {type: string}
+  /readyz:
+    get:
+      tags: [ops]
+      operationId: getReadiness
+      summary: Readiness probe (datastore reachable)
+      responses:
+        "200":
+          description: Ready to take traffic.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, const: ready}
+                  instance: {type: string}
+        "503":
+          description: Not ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, const: not ready}
+                  reason: {type: string}
+                  instance: {type: string}
+  /metrics:
+    get:
+      tags: [ops]
+      operationId: getMetrics
+      summary: Prometheus metrics
+      responses:
+        "200":
+          description: Prometheus exposition format.
+          content:
+            text/plain:
+              schema: {type: string}
+  /v1/openapi.yaml:
+    get:
+      tags: [ops]
+      operationId: getOpenAPI
+      summary: This OpenAPI document
+      description: Served only when the discovery module is enabled.
+      responses:
+        "200":
+          description: OpenAPI 3.1 document.
+          content:
+            application/yaml:
+              schema: {type: string}
+
+  /v1/ca/root.pem:
+    get:
+      tags: [ca]
+      operationId: getRootCA
+      summary: Root CA certificate (AIA caIssuers target)
+      responses:
+        "200":
+          $ref: "#/components/responses/PEMCertificate"
+        "404":
+          $ref: "#/components/responses/Error"
+  /v1/ca/intermediate.pem:
+    get:
+      tags: [ca]
+      operationId: getIntermediateCA
+      summary: Intermediate CA certificate (issuer of all leaf certificates)
+      responses:
+        "200":
+          $ref: "#/components/responses/PEMCertificate"
+        "404":
+          $ref: "#/components/responses/Error"
+
+  /v1/certificates:
+    post:
+      tags: [certificates]
+      operationId: issueCertificate
+      summary: Issue a leaf certificate from a CSR
+      description: |
+        The CSR's subject and DNS SANs are honoured as submitted after its
+        self-signature is verified. Key usage, extended key usage, validity
+        and AIA/CDP/OCSP extensions come from the named profile, never from
+        the CSR. List valid profile names with `GET /v1/profiles`.
+      x-required-role: manager
+      security: [{mtls: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profile, csr]
+              properties:
+                profile:
+                  type: string
+                  description: Profile name, e.g. `server-tls` or `document-signing`.
+                csr:
+                  type: string
+                  description: PEM-encoded PKCS#10 certificate signing request.
+      responses:
+        "201":
+          description: Certificate issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  serial: {$ref: "#/components/schemas/Serial"}
+                  profile: {type: string}
+                  not_before: {type: string, format: date-time}
+                  not_after: {type: string, format: date-time}
+                  pem: {type: string, description: PEM-encoded leaf certificate.}
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /v1/certificates/{serial}:
+    get:
+      tags: [certificates]
+      operationId: getCertificate
+      summary: Look up any certificate this CA issued
+      x-required-role: manager
+      security: [{mtls: []}]
+      parameters:
+        - $ref: "#/components/parameters/Serial"
+      responses:
+        "200":
+          description: Certificate record.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Certificate"}
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /v1/certificates/{serial}/revoke:
+    post:
+      tags: [certificates]
+      operationId: revokeCertificate
+      summary: Revoke a leaf certificate
+      description: |
+        Irreversible. The CRL cache is invalidated immediately and OCSP
+        reports the certificate as revoked from the next query. Revoking an
+        API client certificate also cuts off its API access. Root,
+        intermediate and other non-leaf certificates cannot be revoked here.
+      x-required-role: manager
+      security: [{mtls: []}]
+      parameters:
+        - $ref: "#/components/parameters/Serial"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: {$ref: "#/components/schemas/RevocationReason"}
+      responses:
+        "200":
+          description: Certificate revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  serial: {$ref: "#/components/schemas/Serial"}
+                  revoked_at: {type: string, format: date-time}
+                  reason: {$ref: "#/components/schemas/RevocationReason"}
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+
+  /v1/profiles:
+    get:
+      tags: [profiles]
+      operationId: listProfiles
+      summary: List certificate profiles available for issuance
+      x-required-role: manager
+      security: [{mtls: []}]
+      responses:
+        "200":
+          description: All profiles (built-in and loaded from the profiles directory).
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Profile"}
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /v1/profiles/reload:
+    post:
+      tags: [profiles]
+      operationId: reloadProfiles
+      summary: Re-read the profiles directory without a restart
+      x-required-role: admin
+      security: [{mtls: []}]
+      responses:
+        "200":
+          description: Profiles reloaded.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  profiles:
+                    type: array
+                    items: {type: string}
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "503":
+          $ref: "#/components/responses/Error"
+
+  /v1/clients:
+    post:
+      tags: [clients]
+      operationId: issueClientCertificate
+      summary: Issue an API client certificate and assign it a role
+      description: |
+        Grants API access to whoever holds the CSR's private key. To
+        deactivate a client later, revoke its certificate with
+        `POST /v1/certificates/{serial}/revoke`.
+      x-required-role: admin
+      security: [{mtls: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [csr, role]
+              properties:
+                csr:
+                  type: string
+                  description: PEM-encoded PKCS#10 certificate signing request.
+                role: {$ref: "#/components/schemas/Role"}
+      responses:
+        "201":
+          description: Client certificate issued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  serial: {$ref: "#/components/schemas/Serial"}
+                  role: {$ref: "#/components/schemas/Role"}
+                  pem: {type: string}
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+    get:
+      tags: [clients]
+      operationId: listClients
+      summary: List API client certificates and their roles
+      x-required-role: admin
+      security: [{mtls: []}]
+      responses:
+        "200":
+          description: Client roster.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    serial: {$ref: "#/components/schemas/Serial"}
+                    role: {$ref: "#/components/schemas/Role"}
+                    subject: {type: string}
+                    not_after: {type: string, format: date-time}
+                    revoked_at: {type: string, format: date-time}
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+
+  /v1/audit:
+    get:
+      tags: [audit]
+      operationId: listAudit
+      summary: Most recent audit entries, newest first
+      x-required-role: admin
+      security: [{mtls: []}]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 1000, default: 100}
+          description: Values above 1000 are clamped to 1000.
+      responses:
+        "200":
+          description: Audit entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: {type: integer}
+                    timestamp: {type: string, format: date-time}
+                    actor: {type: string}
+                    action: {type: string, examples: [issue, revoke, client-issue, profiles-reload, tsa-rotate]}
+                    target: {type: string}
+                    detail: {type: string}
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+
+  /v1/crl/{file}:
+    get:
+      tags: [revocation]
+      operationId: getCRL
+      summary: DER-encoded CRL (CRL Distribution Point target)
+      description: |
+        `intermediate.crl` lists revoked leaf certificates; `root.crl` lists
+        revoked certificates issued directly by the root.
+      parameters:
+        - name: file
+          in: path
+          required: true
+          schema: {type: string, enum: [root.crl, intermediate.crl]}
+      responses:
+        "200":
+          description: CRL.
+          content:
+            application/pkix-crl:
+              schema: {type: string, format: binary}
+        "404":
+          $ref: "#/components/responses/Error"
+  /v1/ocsp:
+    post:
+      tags: [revocation]
+      operationId: ocsp
+      summary: RFC 6960 OCSP responder
+      requestBody:
+        required: true
+        content:
+          application/ocsp-request:
+            schema: {type: string, format: binary, maxLength: 65536}
+      responses:
+        "200":
+          description: DER-encoded OCSP response.
+          content:
+            application/ocsp-response:
+              schema: {type: string, format: binary}
+        "400":
+          $ref: "#/components/responses/Error"
+
+  /v1/tsa:
+    post:
+      tags: [tsa]
+      operationId: timestamp
+      summary: RFC 3161 time-stamp request
+      description: SHA-1 message imprints are rejected; use SHA-256 or stronger.
+      requestBody:
+        required: true
+        content:
+          application/timestamp-query:
+            schema: {type: string, format: binary, maxLength: 65536}
+      responses:
+        "200":
+          description: DER-encoded TimeStampResp.
+          content:
+            application/timestamp-reply:
+              schema: {type: string, format: binary}
+        "400":
+          $ref: "#/components/responses/Error"
+  /v1/tsa/rotate:
+    post:
+      tags: [tsa]
+      operationId: rotateTSA
+      summary: Mint a new TSA signing identity and switch to it
+      description: |
+        The previous TSA certificate stays valid and unrevoked so existing
+        timestamps remain verifiable.
+      x-required-role: admin
+      security: [{mtls: []}]
+      responses:
+        "200":
+          description: Rotated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  serial: {$ref: "#/components/schemas/Serial"}
+                  previous_serial: {$ref: "#/components/schemas/Serial"}
+                  profile: {type: string}
+                  not_before: {type: string, format: date-time}
+                  not_after: {type: string, format: date-time}
+                  pem: {type: string}
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+
+  /v1/acme/eab-tokens:
+    post:
+      tags: [acme]
+      operationId: issueEABToken
+      summary: Issue a one-time ACME External Account Binding credential
+      description: |
+        The credential is valid for 24 hours and can create exactly one ACME
+        account. Certificates issued through that account get `role`.
+      x-required-role: admin
+      security: [{mtls: []}]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role:
+                  allOf: [{$ref: "#/components/schemas/Role"}]
+                  default: manager
+      responses:
+        "201":
+          description: EAB credential.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  key_id: {type: string}
+                  hmac_key: {type: string, description: base64url (unpadded) HMAC key.}
+                  role: {$ref: "#/components/schemas/Role"}
+                  expires_at: {type: string, format: date-time}
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /v1/acme/directory:
+    get:
+      tags: [acme]
+      operationId: acmeDirectory
+      summary: RFC 8555 directory object
+      responses:
+        "200":
+          description: Directory.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  newNonce: {type: string, format: uri}
+                  newAccount: {type: string, format: uri}
+                  newOrder: {type: string, format: uri}
+                  meta:
+                    type: object
+                    properties:
+                      externalAccountRequired: {type: boolean, const: true}
+  /v1/acme/new-nonce:
+    get:
+      tags: [acme]
+      operationId: acmeNewNonceGet
+      summary: Obtain a replay nonce
+      responses:
+        "204":
+          $ref: "#/components/responses/ACMENonce"
+    head:
+      tags: [acme]
+      operationId: acmeNewNonceHead
+      summary: Obtain a replay nonce
+      responses:
+        "204":
+          $ref: "#/components/responses/ACMENonce"
+  /v1/acme/new-account:
+    post:
+      tags: [acme]
+      operationId: acmeNewAccount
+      summary: Create an account (JWS with jwk header and externalAccountBinding)
+      requestBody:
+        required: true
+        content:
+          application/jose+json:
+            schema: {$ref: "#/components/schemas/JWS"}
+      responses:
+        "201":
+          description: Account created; Location header holds the account URL (use as `kid`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, const: valid}
+                  contact: {type: array, items: {type: string}}
+                  termsOfServiceAgreed: {type: boolean}
+        "400":
+          $ref: "#/components/responses/ACMEProblem"
+        "401":
+          $ref: "#/components/responses/ACMEProblem"
+  /v1/acme/new-order:
+    post:
+      tags: [acme]
+      operationId: acmeNewOrder
+      summary: Create an order (one `trustmate-client` identifier)
+      requestBody:
+        required: true
+        content:
+          application/jose+json:
+            schema: {$ref: "#/components/schemas/JWS"}
+      responses:
+        "201":
+          description: Order created in `ready` status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ACMEOrder"}
+        "400":
+          $ref: "#/components/responses/ACMEProblem"
+        "401":
+          $ref: "#/components/responses/ACMEProblem"
+  /v1/acme/order/{id}:
+    get:
+      tags: [acme]
+      operationId: acmeGetOrder
+      summary: Order status
+      parameters:
+        - $ref: "#/components/parameters/ACMEID"
+      responses:
+        "200":
+          description: Order.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ACMEOrder"}
+        "404":
+          $ref: "#/components/responses/ACMEProblem"
+  /v1/acme/order/{id}/finalize:
+    post:
+      tags: [acme]
+      operationId: acmeFinalize
+      summary: Submit the CSR (base64url DER) and issue the certificate
+      parameters:
+        - $ref: "#/components/parameters/ACMEID"
+      requestBody:
+        required: true
+        content:
+          application/jose+json:
+            schema: {$ref: "#/components/schemas/JWS"}
+      responses:
+        "200":
+          description: Order is `valid`; `certificate` holds the download URL.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ACMEOrder"}
+        "400":
+          $ref: "#/components/responses/ACMEProblem"
+        "401":
+          $ref: "#/components/responses/ACMEProblem"
+        "403":
+          $ref: "#/components/responses/ACMEProblem"
+  /v1/acme/authorization/{id}:
+    get:
+      tags: [acme]
+      operationId: acmeGetAuthorization
+      summary: Authorization (always valid, no challenges)
+      parameters:
+        - $ref: "#/components/parameters/ACMEID"
+      responses:
+        "200":
+          description: Authorization.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: {type: string, const: valid}
+                  identifier: {$ref: "#/components/schemas/ACMEIdentifier"}
+                  challenges: {type: array, maxItems: 0}
+        "404":
+          $ref: "#/components/responses/ACMEProblem"
+  /v1/acme/certificate/{id}:
+    get:
+      tags: [acme]
+      operationId: acmeGetCertificate
+      summary: Download the issued certificate chain (leaf first)
+      parameters:
+        - $ref: "#/components/parameters/ACMEID"
+      responses:
+        "200":
+          description: PEM chain.
+          content:
+            application/pem-certificate-chain:
+              schema: {type: string}
+        "404":
+          $ref: "#/components/responses/ACMEProblem"
+
+components:
+  securitySchemes:
+    mtls:
+      type: mutualTLS
+      description: |
+        Client certificate issued by this CA (via `POST /v1/clients`, ACME, or
+        the bootstrap admin certificate) with a role assigned and not revoked.
+
+  parameters:
+    Serial:
+      name: serial
+      in: path
+      required: true
+      schema: {$ref: "#/components/schemas/Serial"}
+    ACMEID:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, pattern: "^[0-9a-f]{32}$"}
+
+  responses:
+    Error:
+      description: Error.
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+    ACMEProblem:
+      description: RFC 8555 problem document; carries a Replay-Nonce header.
+      content:
+        application/problem+json:
+          schema:
+            type: object
+            properties:
+              type: {type: string, examples: ["urn:ietf:params:acme:error:badNonce"]}
+              detail: {type: string}
+    ACMENonce:
+      description: Nonce in the Replay-Nonce header.
+      headers:
+        Replay-Nonce:
+          schema: {type: string}
+    PEMCertificate:
+      description: PEM-encoded certificate.
+      content:
+        application/x-pem-file:
+          schema: {type: string}
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
+    Serial:
+      type: string
+      pattern: "^[0-9]+$"
+      description: Certificate serial number in decimal.
+    Role:
+      type: string
+      enum: [admin, manager]
+      description: "`admin` is a superset of `manager`."
+    RevocationReason:
+      type: string
+      enum: [unspecified, keyCompromise, affiliationChanged, superseded, cessationOfOperation]
+      default: unspecified
+    Certificate:
+      type: object
+      properties:
+        serial: {$ref: "#/components/schemas/Serial"}
+        kind: {type: string, enum: [root, intermediate, leaf]}
+        profile: {type: string}
+        subject: {type: string}
+        issuer_serial: {$ref: "#/components/schemas/Serial"}
+        not_before: {type: string, format: date-time}
+        not_after: {type: string, format: date-time}
+        pem: {type: string}
+        revoked_at: {type: string, format: date-time}
+        revocation_reason: {$ref: "#/components/schemas/RevocationReason"}
+    Profile:
+      type: object
+      properties:
+        name: {type: string}
+        version: {type: integer}
+        key_usage: {type: array, items: {type: string}}
+        ext_key_usage: {type: array, items: {type: string}}
+        critical_eku: {type: boolean}
+        validity: {type: string, description: Go duration, e.g. `8760h0m0s`.}
+        enable_ocsp: {type: boolean}
+        enable_crl: {type: boolean}
+    JWS:
+      type: object
+      description: Flattened JWS JSON serialization (RFC 7515).
+      required: [protected, payload, signature]
+      properties:
+        protected: {type: string}
+        payload: {type: string}
+        signature: {type: string}
+    ACMEIdentifier:
+      type: object
+      properties:
+        type: {type: string, const: trustmate-client}
+        value: {type: string, description: Requested subject common name.}
+    ACMEOrder:
+      type: object
+      properties:
+        status: {type: string, enum: [ready, processing, valid]}
+        expires: {type: string, format: date-time}
+        identifiers:
+          type: array
+          items: {$ref: "#/components/schemas/ACMEIdentifier"}
+        authorizations: {type: array, items: {type: string, format: uri}}
+        finalize: {type: string, format: uri}
+        certificate: {type: string, format: uri}

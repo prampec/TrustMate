@@ -47,6 +47,11 @@ type ModulesConfig struct {
 	// additional certificate-issuance surface an operator opts into,
 	// not something every deployment needs.
 	ACME bool `yaml:"acme"`
+	// Discovery serves machine-readable descriptions of this API
+	// (/v1/openapi.yaml) without authentication, so clients and AI agents
+	// can find out what the service offers. On by default: everything it
+	// exposes is already public in the source tree.
+	Discovery bool `yaml:"discovery"`
 }
 
 type StoreConfig struct {
@@ -146,6 +151,7 @@ func Defaults() Config {
 		Modules: ModulesConfig{
 			Revocation: true,
 			TSA:        true,
+			Discovery:  true,
 		},
 		Store: StoreConfig{
 			Driver: "sqlite",

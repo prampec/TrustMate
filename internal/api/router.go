@@ -22,6 +22,7 @@ type ModuleConfig struct {
 	EnableRevocation bool
 	EnableTSA        bool
 	EnableACME       bool
+	EnableDiscovery  bool
 }
 
 // ReadyChecker reports whether the service is ready to take traffic
@@ -78,6 +79,10 @@ func NewRouter(deps Deps, ready ReadyChecker) http.Handler {
 		mux.HandleFunc("GET /v1/acme/authorization/{id}", handleACMEGetAuthorization(deps))
 		mux.HandleFunc("GET /v1/acme/certificate/{id}", handleACMECertificate(deps))
 		deps.Logger.Info("acme module enabled")
+	}
+
+	if deps.ModuleConfig.EnableDiscovery {
+		mux.HandleFunc("GET /v1/openapi.yaml", handleOpenAPI)
 	}
 
 	return withRequestLogging(deps.Logger, mux)

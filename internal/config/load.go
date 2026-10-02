@@ -57,6 +57,7 @@ func ApplyEnvOverrides(cfg *Config) {
 	boolVar(&cfg.Modules.Revocation, "TRUSTMATE_ENABLE_REVOCATION")
 	boolVar(&cfg.Modules.TSA, "TRUSTMATE_ENABLE_TSA")
 	boolVar(&cfg.Modules.ACME, "TRUSTMATE_ENABLE_ACME")
+	boolVar(&cfg.Modules.Discovery, "TRUSTMATE_ENABLE_DISCOVERY")
 	strVar(&cfg.Store.Driver, "TRUSTMATE_STORE_DRIVER")
 	strVar(&cfg.Store.DSN, "TRUSTMATE_STORE_DSN")
 	strVar(&cfg.Keystore.Driver, "TRUSTMATE_KEYSTORE_DRIVER")

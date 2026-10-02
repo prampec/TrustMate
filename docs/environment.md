@@ -20,7 +20,7 @@ document is an environment variable.
 ## Modularity: enabling and disabling features
 
 TrustMate is built as independently-togglable modules. The CA/PKI core
-(issuance, revocation ledger, client roster) is always on; three larger
+(issuance, revocation ledger, client roster) is always on; the other
 subsystems are opt-in or opt-out via boolean env vars:
 
 | Variable | Default | Effect when disabled |
@@ -28,6 +28,7 @@ subsystems are opt-in or opt-out via boolean env vars:
 | `TRUSTMATE_ENABLE_REVOCATION` | `true` | `/v1/crl/*` and `/v1/ocsp` routes are removed, and newly issued certificates stop carrying CDP/AIA-OCSP extensions |
 | `TRUSTMATE_ENABLE_TSA` | `true` | `/v1/tsa` and `/v1/tsa/rotate` routes are removed; no TSA signing identity is bootstrapped on first run |
 | `TRUSTMATE_ENABLE_ACME` | `false` | all `/v1/acme/*` routes (EAB issuance and the RFC 8555 client-facing routes) are removed |
+| `TRUSTMATE_ENABLE_DISCOVERY` | `true` | `/v1/openapi.yaml` (the unauthenticated OpenAPI description of the REST API) is removed |
 
 Toggling one of these only changes route availability and certificate
 extensions going forward — it does not retroactively revoke or reissue

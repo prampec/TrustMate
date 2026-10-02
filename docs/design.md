@@ -256,6 +256,7 @@ GET    /v1/audit                     issuance/revocation audit trail
 GET    /healthz                      liveness probe
 GET    /readyz                       readiness probe (datastore reachable, etc.)
 GET    /metrics                      Prometheus exposition format
+GET    /v1/openapi.yaml              OpenAPI 3.1 description of this API  (discovery module)
 ```
 
 Auth: mutual TLS client certs or a bearer token for `/v1/certificates` and

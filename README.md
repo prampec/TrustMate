@@ -207,6 +207,15 @@ safely means resolving CRL/OCSP per-certificate by issuer generation, not
 just minting a new key — a bigger architecture change than TSA rotation
 needed, since a TSA cert only ever signs new timestamps.
 
+## API reference
+
+The full REST API is described by an OpenAPI 3.1 document,
+[`internal/api/openapi.yaml`](internal/api/openapi.yaml). A running
+instance also serves it unauthenticated at `GET /v1/openapi.yaml`, so
+HTTP clients, SDK generators and AI agents can discover what the service
+offers. Set `TRUSTMATE_ENABLE_DISCOVERY=false` to turn the route off.
+Each operation's `x-required-role` names the mTLS client role it needs.
+
 ## MCP server for AI assistants
 
 `trustmate-mcp` is a local [Model Context Protocol](https://modelcontextprotocol.io)
@@ -277,7 +286,7 @@ cmd/trustmated/          service entrypoint
 cmd/trustmate-admin/     operator CLI: profiles, client roster, audit
 cmd/trustmate-management/ operator CLI: certificate issue/get/revoke
 cmd/trustmate-mcp/       local MCP (stdio) server exposing the REST API as AI-assistant tools
-internal/api/            REST surface + RBAC + health/metrics/logging
+internal/api/            REST surface + RBAC + health/metrics/logging + OpenAPI spec
 internal/acme/           RFC 8555 JWS/JWK primitives (parsing, verification, thumbprints)
 internal/bootstrap/      first-run CA/admin/server-tls/tsa cert generation
 internal/cliclient/      shared mTLS REST client for the operator CLIs and trustmate-mcp

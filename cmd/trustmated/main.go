@@ -173,6 +173,7 @@ func main() {
 		EnableRevocation: cfg.Modules.Revocation,
 		EnableTSA:        cfg.Modules.TSA,
 		EnableACME:       cfg.Modules.ACME,
+		EnableDiscovery:  cfg.Modules.Discovery,
 	}
 
 	var tsaResponder *tsa.Responder
