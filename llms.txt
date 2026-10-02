@@ -22,7 +22,8 @@ Key facts for agents:
 ## Tools for agents
 
 - [trustmate-mcp](https://github.com/prampec/trustmate/blob/main/README.md#mcp-server-for-ai-assistants): local stdio MCP server over the REST API. It generates private keys locally, keeps the client certificate out of the model's context, marks destructive tools, and has a `--read-only` mode. Prefer it to raw HTTP calls when an MCP client is available.
-- [Operator CLIs](https://github.com/prampec/trustmate/blob/main/README.md#operator-clis): `trustmate-admin` (profiles, clients, audit) and `trustmate-management` (certificate issue/get/revoke)
+- [Claude Code plugin](https://github.com/prampec/trustmate/tree/main/plugins/trustmate): sets up trustmate-mcp and adds an operating skill. Install with `claude plugin marketplace add prampec/trustmate`, then `claude plugin install trustmate@trustmate`
+- [Operator CLIs](https://github.com/prampec/trustmate/blob/main/README.md#operator-clis): `trustmate-admin` (profiles, clients, audit) and `trustmate-management` (certificate issue/get/revoke). They print JSON on stdout and use stable exit codes: 3 when the server rejects the request, 4 on a server error, with the problem document on stderr
 
 ## Optional
 

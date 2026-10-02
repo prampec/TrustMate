@@ -1,0 +1,63 @@
+{
+  "name": "trustmate",
+  "displayName": "TrustMate",
+  "description": "Operate a TrustMate certificate authority: issue, preview, inspect and revoke certificates, read CRLs and request RFC 3161 timestamps",
+  "author": {
+    "name": "prampec",
+    "url": "https://github.com/prampec"
+  },
+  "homepage": "https://github.com/prampec/trustmate#mcp-server-for-ai-assistants",
+  "repository": "https://github.com/prampec/trustmate",
+  "keywords": ["pki", "certificates", "x509", "ca", "ocsp", "crl", "tsa", "mcp"],
+  "mcpServers": {
+    "trustmate": {
+      "command": "trustmate-mcp",
+      "env": {
+        "TRUSTMATE_CLIENT_SERVER": "${user_config.server}",
+        "TRUSTMATE_CLIENT_CERT": "${user_config.client_cert}",
+        "TRUSTMATE_CLIENT_KEY": "${user_config.client_key}",
+        "TRUSTMATE_CLIENT_CA": "${user_config.server_ca}",
+        "TRUSTMATE_MCP_OUTPUT_DIR": "${user_config.output_dir}",
+        "TRUSTMATE_MCP_READ_ONLY": "${user_config.read_only}"
+      }
+    }
+  },
+  "userConfig": {
+    "server": {
+      "type": "string",
+      "title": "TrustMate server URL",
+      "description": "Base URL of the TrustMate REST API, e.g. https://ca.example.com:8080",
+      "required": true
+    },
+    "client_cert": {
+      "type": "file",
+      "title": "Client certificate",
+      "description": "PEM client certificate issued by this CA. Use a manager-role certificate unless admin tools are needed",
+      "required": true
+    },
+    "client_key": {
+      "type": "file",
+      "title": "Client private key",
+      "description": "PEM private key for the client certificate. Only trustmate-mcp reads it; it never enters the conversation",
+      "required": true
+    },
+    "server_ca": {
+      "type": "file",
+      "title": "Server CA bundle",
+      "description": "PEM bundle to verify the server, usually the TrustMate root CA (root.pem)",
+      "required": true
+    },
+    "output_dir": {
+      "type": "directory",
+      "title": "Output directory",
+      "description": "Where generated keys, issued certificates and timestamp tokens are written",
+      "required": true
+    },
+    "read_only": {
+      "type": "boolean",
+      "title": "Read-only mode",
+      "description": "Expose only tools that neither change server state nor write files. Turn off to allow issuing, revoking and timestamping",
+      "default": true
+    }
+  }
+}

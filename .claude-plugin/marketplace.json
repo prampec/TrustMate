@@ -1,0 +1,17 @@
+{
+  "name": "trustmate",
+  "description": "Claude Code plugins for operating a TrustMate certificate authority",
+  "owner": {
+    "name": "prampec",
+    "url": "https://github.com/prampec"
+  },
+  "plugins": [
+    {
+      "name": "trustmate",
+      "source": "./plugins/trustmate",
+      "description": "Issue, inspect and revoke certificates and request timestamps from a TrustMate CA, through the trustmate-mcp server and a skill that knows the workflows",
+      "category": "security",
+      "tags": ["pki", "certificates", "x509", "ca", "mcp"]
+    }
+  ]
+}

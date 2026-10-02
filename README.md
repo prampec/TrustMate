@@ -306,7 +306,20 @@ are never overwritten. `--read-only` (or `TRUSTMATE_MCP_READ_ONLY=true`)
 registers only the tools that neither change server state nor write
 files.
 
-Claude Code:
+Claude Code, as a plugin: this repository is also a plugin marketplace.
+The `trustmate` plugin configures the MCP server and adds a skill that
+teaches the assistant TrustMate's workflows and error types. It expects
+`trustmate-mcp` on your `PATH` (it's included in the release archives).
+Claude Code asks for the server URL, certificate paths and output
+directory when you enable the plugin. The plugin starts in read-only
+mode; turn that option off to allow issuing, revoking and timestamping.
+
+```sh
+claude plugin marketplace add prampec/trustmate
+claude plugin install trustmate@trustmate
+```
+
+Claude Code, configuring the MCP server by hand:
 
 ```sh
 claude mcp add trustmate \
@@ -363,6 +376,8 @@ internal/observability/  structured logging + Prometheus metrics
 docs/design.md           full product design
 docs/environment.md      full TRUSTMATE_* environment variable reference
 llms.txt                 project summary for AI agents (llmstxt.org)
+.claude-plugin/          Claude Code plugin marketplace manifest
+plugins/trustmate/       Claude Code plugin: trustmate-mcp config + operating skill
 Dockerfile.pkcs11        opt-in cgo build variant for the pkcs11 keystore driver
 ```
 
